@@ -334,14 +334,36 @@ class NationalLawAPI:
             if jo_list:
                 for jo in jo_list:
                     jo_content = self._clean_html(jo.get('조문내용', ''))
+                    
+                    # [Improvement] ID Extraction for Index Scan
+                    # 1. Standard: 제X조(제목)
+                    match = re.match(r'(제\d+조(?:의\d+)?)\(?([^)]*)\)?', jo_content)
+                    if match:
+                        # e.g. "제3조(정의)"
+                        title_id = f"{match.group(1)}{' ' + match.group(2) if match.group(2) else ''}"
+                    else:
+                        # 2. Numbered: 1., 2. or 가., 나.
+                        match_num = re.match(r'^(\d+\.|[가-힣]\.)\s*(.*)', jo_content)
+                        if match_num:
+                             title_id = f"{match_num.group(1)} {match_num.group(2)[:10]}..."
+                        else:
+                             title_id = jo_content[:20].strip() or "조문"
+
                     # 항/호가 있을 수 있음
                     parts = [jo_content]
                     hang_list = self._force_list(jo.get('항', []))
                     for hang in hang_list:
                         h = self._clean_html(hang.get('항내용', ''))
                         if h: parts.append(f"  {h}")
+                        
+                        # [Added] 호 (Subparagraph) Support for AdmRul
+                        ho_list = self._force_list(hang.get('호', []))
+                        for ho in ho_list:
+                            ho_content = self._clean_html(ho.get('호내용', ''))
+                            if ho_content:
+                                parts.append(f"    {ho_content}")
                     
-                    articles.append({'id': jo_content[:20], 'content': "\n".join(parts)})
+                    articles.append({'id': title_id, 'content': "\n".join(parts)})
             
             # 별표
             byeol_root = root.get('별표', {})
@@ -599,29 +621,53 @@ class Investigator:
     """
 
     EXPANSION_PROMPT = """
-    Regarding the user's action '{action}' (Target: {object}), extract 5 'single legal keywords' for searching.
+    User action: '{action}' (Target: {object})
+    
+    Extract 3-5 SPECIFIC REGULATORY KEYWORDS for finding relevant Korean laws.
+    
+    [Strategy]
+    Think about:
+    1. What REGULATIONS exist for this business activity?
+    2. What LEGAL REQUIREMENTS or LICENSES might be needed?
+    3. What are the SPECIFIC LEGAL TERMS used in Korean law for this domain?
+    
+    [Examples - Be SPECIFIC, not generic]
+    ✓ Good (Specific):
+      * "Currency exchange platform" → ["외국환", "전자금융", "환전"]
+      * "Personal data analysis" → ["개인정보", "정보통신", "신용정보"]
+      * "Real estate rental platform" → ["부동산", "중개", "임대차"]
+      * "Cryptocurrency trading" → ["가상자산", "전자금융", "자금세탁"]
+    
+    ✗ Bad (Too generic):
+      * "Currency exchange" → ["금융", "거래", "통화"] ← TOO BROAD
+      * "Data analysis" → ["데이터", "분석"] ← NOT REGULATORY
     
     [Important]
-    The user action is provided in English/Korean, but the **Keywords MUST be in KOREAN** for the South Korean Law Database.
-    If the action is in English, translate the legal concepts to Korean first.
-
-    [Constraints]
-    1. Must be a single word, not a compound noun. (e.g., "Foreign Exchange" -> "외국환", "Personal Information" -> "개인정보")
-    2. Must be a noun without particles. (No '을', '를', '의')
-    3. Output strictly a JSON list of Korean strings.
+    - Keywords MUST be in KOREAN
+    - Focus on REGULATORY and LEGAL terms
+    - Think about what laws REGULATE this activity
+    - Single nouns without particles (No '을', '를', '의')
+    - Return JSON array of 3-5 strings
+    
+    Output format: ["구체적키워드1", "구체적키워드2", "구체적키워드3"]
     """
 
     SELECTOR_PROMPT = """
-    User Action: "{action}"
+Below is a list of {count} laws/rules.
 
-    Below is a list of candidate laws/rules:
-    {candidates}
+Business Action:
+{action}
 
-    [Instructions]
-    From the [Candidates] list above, select up to 10 items most relevant to the user's action.
-    DO NOT create or add new law names that are not in the list.
-    Output ONLY the exact text from the [Candidates] list as a JSON list.
-    """
+Available Laws:
+{candidates}
+
+Task: Select ALL laws that are relevant to this business action. Return their exact names as a JSON array.
+
+Output format:
+["법령명1", "법령명2", "법령명3"]
+
+If NONE are relevant, return: []
+"""
 
     KEYWORD_GEN_PROMPT = """
     User Action: "{action}"
@@ -677,7 +723,7 @@ class Investigator:
     async def _plan_search(self, action: AtomicAction) -> SearchStrategy:
         prompt = self.STRATEGY_PROMPT.format(action=action.action)
         # [MODEL: GPT-4o-mini] 검색 전략 수립 (비용 절감)
-        response = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
+        response = await llm_client.generate("", prompt, model="gpt-4o-mini", max_tokens=512)
         try:
             data = json_repair.loads(response)
             return SearchStrategy(**data)
@@ -699,7 +745,7 @@ class Investigator:
         # 1. 법령명 추출 (단일 키워드)
         prompt = self.EXPANSION_PROMPT.format(action=f"{action.action}", object=action.object)
         # [MODEL: GPT-4o-mini] 키워드 추출은 단순 작업
-        response = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=256)
+        response = await llm_client.generate("", prompt, model="gpt-4o-mini", max_tokens=256)
         try:
             parsed = json_repair.loads(response)
             return self._clean_keywords(parsed if isinstance(parsed, list) else [str(parsed)])[:5]
@@ -719,14 +765,36 @@ class Investigator:
 
     async def _select_best_candidates(self, candidates: List[Dict[str, Any]], action_text: str) -> List[Dict[str, Any]]:
         if not candidates: return []
+        
+        # [OPTIMIZATION] LLM에게 너무 많은 후보를 주면 처리 못함. 상위 30개로 제한
+        if len(candidates) > 30:
+            print(f"      ⚠️ [Selector] 후보 {len(candidates)}개 → 30개로 제한")
+            candidates = candidates[:30]
 
         # LLM에게 후보군 전달하여 선택 요청
         candidate_names = [c.get('법령명한글') or c.get('행정규칙명') for c in candidates]
-        prompt = self.SELECTOR_PROMPT.format(action=action_text, candidates=candidate_names)
-
+        
+        print(f"      📋 [Selector] {len(candidates)}개 후보에서 선택 중...")
+        print(f"      📜 [후보 목록]:")
+        for i, name in enumerate(candidate_names[:10], 1):  # 처음 10개만 출력
+            print(f"         {i}. {name}")
+        if len(candidate_names) > 10:
+            print(f"         ... 외 {len(candidate_names) - 10}개")
+        
+        prompt = self.SELECTOR_PROMPT.format(
+            action=action_text,
+            count=len(candidate_names),
+            candidates="\n".join([f"{i+1}. {name}" for i, name in enumerate(candidate_names)])
+        )
+        
+        print(f"      📋 [DEBUG] Selector Prompt:\n{prompt[:500]}...\n")  # 프롬프트 일부 출력
+        
         try:
             # [MODEL: GPT-4o-mini] 목록 중 선택(Selection)은 mini도 잘함
-            response = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
+            response = await llm_client.generate("", prompt, model="gpt-4o-mini", max_tokens=1024)  # 프롬프트를 user_input에
+            
+            print(f"      🔍 [Selector] LLM 전체 응답:\n{response}\n")  # 전체 응답 출력
+            
             selected_names = json_repair.loads(response)
             if not isinstance(selected_names, list): selected_names = [str(selected_names)]
 
@@ -741,7 +809,12 @@ class Investigator:
                     if name in item_name or item_name in name:
                         final_items.append(item)
                         break
-            return final_items if final_items else candidates[:10] # Fallback increased
+            
+            if not final_items:
+                print(f"      ⚠️ [Selector] 매칭 실패. 상위 10개 사용 (Fallback)")
+                return candidates[:10]
+            
+            return final_items
         except Exception as e:
             print(f"      ⚠️ Selector Error: {e}")
             return candidates[:10]
@@ -961,20 +1034,35 @@ class Investigator:
                 # 1. 목차(제목)만 추출
                 toc_text = "\n".join([f"{i}. {art['id']}" for i, art in enumerate(articles)])
                 
+                print(f"        -> 분석 대상 행위: {action.action[:100]}...")  # 디버깅용
+                
                 prompt = f"""
-                [Table of Contents: {title}]
-                {toc_text}
+You are analyzing a legal document to find relevant articles for a specific business action.
+
+[Document: {title}]
+[Table of Contents]
+{toc_text}
+
+[Business Action to Analyze]
+{action.action}
+
+Task:
+1. Review the table of contents above
+2. Identify which articles are MOST relevant to the business action
+3. Select up to 5 article indices (numbers only)
+4. If NO articles seem relevant, return an empty list: []
+
+Output Format (JSON array of numbers):
+[0, 5, 12]
+
+Important:
+- Only select articles that are DIRECTLY related to the business action
+- If unsure or no clear match, return []
+- Be strict in selection to avoid irrelevant articles
+"""
                 
-                [User Action]
-                {action.action}
-                
-                Select the indices (numbers) of articles that seem most relevant to the User Action.
-                Select up to 5 articles. If none, return empty list.
-                Output JSON: [0, 3, 12]
-                """
-                
-                # [MODEL: GPT-4o-mini] 목차 스캐닝은 매우 가벼움
-                res = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=128)
+                # [MODEL: GPT-4o-mini] 목차 스캐닝
+                res = await llm_client.generate("", prompt, model="gpt-4o-mini", max_tokens=256)
                 try:
                     selected_indices = json_repair.loads(res)
                     if not isinstance(selected_indices, list): selected_indices = []
@@ -1020,7 +1108,10 @@ class Investigator:
                         self._analysis_cache[cache_key] = reviews
                         return reviews
                     else:
-                        print(f"        ⚠️ Index Scan: 관련 조항을 찾지 못함. Chunking으로 전환...")
+                        # [Critical Fix] 인덱스 스캔 결과 "관련 없음"이면 과감하게 Skip (무작정 청킹 방지)
+                        print(f"        🚫 [Index Scan] '{title}'에서 관련 조항 발견되지 않음 -> 분석 종료.")
+                        self._analysis_cache[cache_key] = []
+                        return []
                 except Exception as e:
                     print(f"        ⚠️ Index Scan Error: {e}, Falling back to chunking.")
                     pass # 실패하면 아래 청크 로직으로 넘어감
@@ -1363,8 +1454,8 @@ class AdversarialDebate:
     async def _opening_statements(self, context: str) -> Tuple[str, str]:
         print("    ⚔️ [Round 1] Opening Statements...")
         # [MODEL: GPT-4o-mini] 토론 내용 생성은 Text Gen 능력이면 충분. 비용 절감.
-        pros_task = llm_client.generate(self.PROSECUTOR_PROMPT.format(**context), "", model="gpt-4o-mini")
-        def_task = llm_client.generate(self.DEFENSE_PROMPT.format(**context), "", model="gpt-4o-mini")
+        pros_task = llm_client.generate("", self.PROSECUTOR_PROMPT.format(**context), model="gpt-4o-mini")
+        def_task = llm_client.generate("", self.DEFENSE_PROMPT.format(**context), model="gpt-4o-mini")
         
         pros_arg, def_arg = await asyncio.gather(pros_task, def_task)
         return pros_arg.strip(), def_arg.strip()
@@ -1400,7 +1491,7 @@ class AdversarialDebate:
         )
 
         # [MODEL: GPT-4o-mini] 판결 생성 (비용 절감)
-        response = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
+        response = await llm_client.generate("", prompt, model="gpt-4o-mini", max_tokens=512)
 
         try:
             data = json_repair.loads(response)
