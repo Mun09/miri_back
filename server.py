@@ -8,23 +8,32 @@ import asyncio
 import os
 from miri import run_analysis, run_analysis_stream  # Import your core logic
 
+
 app = FastAPI()
 
 # CORS configuration
-origins = [
-    "http://localhost:3000",  # Next.js frontend (local)
-    "http://localhost:8000",
-    "https://miri-front.vercel.app",  # Production frontend (update with your actual domain)
-    os.getenv("FRONTEND_URL", ""),  # Allow custom frontend URL from env
-]
+# TEMPORARY: Allow all origins for testing
+# TODO: Restrict to specific domains in production
+origins = ["*"]
 
-# Filter out empty strings
-origins = [origin for origin in origins if origin]
+# PRODUCTION CONFIGURATION (uncomment when ready):
+# origins = [
+#     "http://localhost:3000",
+#     "http://localhost:8000",
+#     "https://miri-front.vercel.app",
+# ]
+# 
+# frontend_url = os.getenv("FRONTEND_URL", "")
+# if frontend_url:
+#     origins.append(frontend_url)
+
+# Log configured origins for debugging
+print(f"🔒 CORS Configured Origins: {origins}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=False,  # Set to False when using "*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
