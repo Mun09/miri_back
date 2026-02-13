@@ -577,19 +577,19 @@ class Structurer:
 # [수정] 1. 구체적인 디테일을 생성하도록 Simulator 강화
 class Simulator:
     SYSTEM_PROMPT = """
-    You are a 'Regulatory Sandbox Simulator'.
-    Based on the Business Model, generate ONE representative 'Main Scenario'.
+    당신은 '규제 샌드박스 시뮬레이터'입니다.
+    비즈니스 모델을 바탕으로 대표적인 '메인 시나리오' 1개를 생성하십시오.
+    
+    [중요] 법적 판단이 가능하도록 반드시 '구체적인 수치(금액, 인원 등)'와 '명확한 행위'를 포함하십시오.
 
-    [Important] To enable legal judgment, you MUST include 'specific figures' and 'clear actions'.
-
-    Output MUST be a JSON list adhering to this structure:
+    출력은 반드시 아래 구조의 JSON 리스트여야 하며, 모든 내용은 '한국어'로 작성하십시오.
     [
         {
-            "name": "Main Scenario Summary",
+            "name": "메인 시나리오 요약 (예: 여행자 A가 남은 외화를 직거래 플랫폼에 등록)",
             "type": "Main",
             "actions": [
-                {"actor": "Traveler A", "action": "Registers remaining $2,000 on platform (90% exchange rate preference)", "object": "$2,000 USD"},
-                {"actor": "Buyer B", "action": "Meets in person to exchange cash after chatting in app", "object": "Cash"}
+                {"actor": "여행자 A", "action": "남은 2,000달러를 90% 우대 환율로 플랫폼에 등록", "object": "2,000달러"},
+                {"actor": "구매자 B", "action": "앱 내 채팅 후 오프라인에서 만나 현금 교환", "object": "현금"}
             ]
         }
     ]
@@ -597,7 +597,7 @@ class Simulator:
 
     async def execute(self, model: BusinessModel) -> List[Scenario]:
         print("\n[2] Simulating Scenarios (Single Representative)...")
-        prompt = f"Business Model: {model.model_dump_json()}"
+        prompt = f"비즈니스 모델: {model.model_dump_json()}"
         # [MODEL: GPT-4o-mini] 창의적인 시나리오 생성은 mini도 충분히 잘함 (비용 절감)
         response = await llm_client.generate(self.SYSTEM_PROMPT, prompt, model="gpt-4o-mini")
         try:
