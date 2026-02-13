@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 # .env 파일 로드
 load_dotenv()
 
+MAX_ANALYSIS_DOCS = 5
+
 try:
     from openai import AsyncOpenAI
 except ImportError:
@@ -134,8 +136,26 @@ class NationalLawAPI:
             return []
 
     def _clean_html(self, text: str) -> str:
+        """HTML 태그 제거 + 불필요한 메타데이터 정리"""
         if not text: return ""
-        return re.sub(r'<[^>]+>', '', text).strip()
+        
+        # 1. HTML 태그 제거
+        text = re.sub(r'<[^>]+>', '', text).strip()
+        
+        # 2. 개정 이력 제거 (예: <개정 2009.1.30>, <신설 2017.1.17>)
+        text = re.sub(r'<(개정|신설|전문개정|타법개정|일부개정|폐지)\s+[\d.,\s]+>', '', text)
+        
+        # 3. 참고 정보 제거 (예: [전문개정 2009.1.30])
+        text = re.sub(r'\[(전문개정|개정|신설|타법개정|일부개정|폐지)\s+[\d.,\s]+\]', '', text)
+        
+        # 4. 장/절/관 헤더 제거 (예: "제1장 총칙", "제2절 외국환업무")
+        text = re.sub(r'제\d+장\s+[가-힣\s]+', '', text)
+        text = re.sub(r'제\d+절\s+[가-힣\s]+', '', text)
+        
+        # 5. 다중 공백/개행 정리
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
 
     def _parse_xml_to_text(self, data: Dict[str, Any]) -> str:
         # 1. 법령 (Law)
@@ -230,9 +250,19 @@ class NationalLawAPI:
             # (1) 조문 파싱
             jo_list = self._force_list(root.get('조문', {}).get('조문단위', []))
             for jo in jo_list:
+                # [OPTIMIZATION] 전문(章節 헤더)은 스킵 (실제 규정 아님)
+                jo_type = jo.get('조문여부', '')
+                if jo_type == '전문':
+                    continue
+                
                 # 조문 제목 (제1조(목적))
                 jo_text = self._clean_html(jo.get('조문내용', ''))
-                match = re.match(r'(제\d+조의?\d?)\(([^)]+)\)', jo_text)
+                
+                # 빈 조문 스킵 (삭제된 조항 등)
+                if not jo_text or len(jo_text) < 5:
+                    continue
+                
+                match = re.match(r'(제\d+조의?\d?)\(?([^)]*)\)?', jo_text)
                 title_id = match.group(1) if match else jo_text[:10]
                 
                 parts = [jo_text]
@@ -313,6 +343,24 @@ class NationalLawAPI:
 
                 if b_content or b_title:
                     articles.append({'id': f"[별표] {b_title}", 'content': b_content or "내용 없음"})
+
+        # 3. 판례 (Prec) - 구조 분석
+        elif '판례' in data:
+            root = data['판례']
+            # 판시사항 (Issues)
+            issue = self._clean_html(root.get('판시사항', ''))
+            if issue:
+                articles.append({'id': '판시사항', 'content': issue})
+            
+            # 판결요지 (Summary)
+            summary = self._clean_html(root.get('판결요지', ''))
+            if summary:
+                articles.append({'id': '판결요지', 'content': summary})
+            else:
+                 # 요지가 없는 경우 본문 사용 (Fallback)
+                 content = self._clean_html(root.get('판례내용', ''))
+                 if content:
+                     articles.append({'id': '판례내용', 'content': content[:3000] + "...(생략)"})
         
         return articles
 
@@ -371,9 +419,10 @@ class LegalEvidence(BaseModel):
     summary: str
 
 class RiskReport(BaseModel):
-    risk_level: str
-    verdict: str
-    citation: str
+    verdict: str = Field(description="Status: Safe | Caution | Danger | Review Required")
+    summary: str = Field(description="Detailed judgement summary")
+    key_issues: List[str] = Field(default_factory=list, description="List of key legal issues")
+    citation: str = Field(default="", description="Relevant laws")
 
 class DocumentReview(BaseModel):
     law_name: str
@@ -494,11 +543,11 @@ simulator = Simulator()
 auditor = Auditor()
 
 import re
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Callable
 
 class SearchStrategy(BaseModel):
     rationale: str = Field(description="검색 전략 수립 이유")
-    databases: List[str] = Field(description="검색할 DB 목록 (순서대로 중요)", default=["law", "admrul", "prec"])
+    databases: List[str] = Field(description="검색할 DB 목록 (순서대로 중요)", default=["law", "admrul"])
     focus_keywords: List[str] = Field(description="전략적으로 집중할 추가 키워드", default_factory=list)
 
 class Investigator:
@@ -515,19 +564,17 @@ class Investigator:
     [Database Characteristics]
     - law (Acts, Decrees): For clear prohibitions, permissions, and penalties.
     - admrul (Administrative Rules): For specific monetary limits, notifications, and guidelines.
-    - prec (Precedents): For interpreting ambiguous laws, similar case judgments (guilty/not guilty).
 
     [Instructions]
     1. If the action has clear illegal potential, prioritize 'law'.
     2. If specific figures or procedures are important, definitely include 'admrul'.
-    3. If it's a legal gray area or interpretation is divided, prioritize 'prec'.
-    4. List databases in order of importance.
-    5. Add 'Focus Keywords' if there are additional topics to search (e.g., fintech, sharing economy).
+    3. List databases in order of importance.
+    4. Add 'Focus Keywords' if there are additional topics to search (e.g., fintech, sharing economy).
     
     Output JSON:
     {{
         "rationale": "Reason for this strategy (English)",
-        "databases": ["law", "prec", "admrul"],
+        "databases": ["law", "admrul"],
         "focus_keywords": ["KoreanKeyWord1", "KoreanKeyWord2"]
     }}
     
@@ -632,9 +679,6 @@ class Investigator:
             if len(k) >= 2: cleaned.append(k)
         return cleaned
 
-    def _smart_slice(self, text: str, keywords: List[str]) -> str:
-        return text[:3500]
-
     async def _expand_query(self, action: AtomicAction) -> List[str]:
         # 1. 법령명 추출 (단일 키워드)
         prompt = self.EXPANSION_PROMPT.format(action=f"{action.action}", object=action.object)
@@ -698,21 +742,24 @@ class Investigator:
         except:
             return {"status": "PASS", "new_keywords": []}
 
-    async def _search_phase(self, keywords: List[str], prec_keywords: List[str], action: AtomicAction, strategy: SearchStrategy) -> List[Tuple[str, str, str, str, Any]]:
+    async def _search_phase(self, keywords: List[str], prec_keywords: List[str], action: AtomicAction, strategy: SearchStrategy, on_log: Optional[Callable[[str], Any]] = None) -> List[Tuple[str, str, str, str, Any]]:
         collected_raw_data = []
         found_law_titles = []
         
+        async def log(msg):
+            if on_log: await on_log(msg)
+
         # Merge focus keywords from strategy
         if strategy.focus_keywords:
             keywords.extend(strategy.focus_keywords)
             prec_keywords.extend(strategy.focus_keywords)
             
         target_dbs = strategy.databases
-        print(f"      🎯 [Strategy Order] {target_dbs}")
+        await log(f"      🎯 [전략] 대상 DB: {target_dbs}")
 
         # [Phase 1.1] 2단계 법령 검색 (후보군 선정 -> LLM 선택 -> 본문 검색)
         if 'law' in target_dbs:
-            print(f"      📡 [1단계] 현행법령(eflaw) 후보 검색: {keywords}")
+            await log(f"      📡 [1단계] 현행법령 후보 검색: {keywords}")
 
         if not keywords: keywords = []
 
@@ -726,7 +773,7 @@ class Investigator:
                 if res:
                     # 키워드별 상위 30개 후보 수집 (기존 10개 -> 30개 확장)
                     candidates = res[:30]
-                    print(f"        -> '{kw}' 결과: {[c.get('법령명한글') for c in candidates]}")
+                    # print(f"        -> '{kw}' 결과: {[c.get('법령명한글') for c in candidates]}")
                     candidate_items.extend(candidates)
 
         # 2. 후보군 중복 제거
@@ -738,6 +785,8 @@ class Investigator:
             if name and name not in seen_ids:
                 seen_ids.add(name)
                 unique_candidates.append(item)
+        
+        await log(f"        -> {len(unique_candidates)}개 법령 후보 발견")
 
         # 3. LLM Selector를 통한 최종 선정
         if unique_candidates:
@@ -746,7 +795,7 @@ class Investigator:
             target_candidates = []
 
         found_law_titles = [item.get('법령명한글') for item in target_candidates]
-        print(f"      👉 2단계 본문 조회 대상: {found_law_titles}")
+        await log(f"      👉 2단계 법령 본문 조회: {len(found_law_titles)}건")
 
         # 4. 본문 상세 조회
         fetch_tasks = [law_api.get_content_from_item(item) for item in target_candidates]
@@ -759,12 +808,13 @@ class Investigator:
         # [Phase 2] AdmRul Search (2-Stage with Selector)
         # 사용자 요청: 행정규칙도 '단어(Keywords)'로 검색해야 더 넓은 범위를 포괄 가능
         if 'admrul' in target_dbs:
+            await log(f"      📡 행정규칙 검색 중...")
             admrul_queries = keywords[:3]
 
             if admrul_queries:
-                print(f"      📡 [1단계] 행정규칙(admrul) 후보 검색: {admrul_queries}")
+                # print(f"      📡 [1단계] 행정규칙(admrul) 후보 검색: {admrul_queries}")
                 
-                adm_tasks = [law_api.search_list('admrul', kw, display=30) for kw in admrul_queries]
+                adm_tasks = [law_api.search_list('admrul', kw, display=30, nw=1) for kw in admrul_queries]
                 adm_raw_results = await asyncio.gather(*adm_tasks)
                 
                 adm_candidates = []
@@ -781,8 +831,8 @@ class Investigator:
                 target_admruls = await self._select_best_candidates(adm_candidates, action.action)
             else:
                 target_admruls = []
-
-            print(f"      👉 2단계 본문 조회 대상: {[item.get('행정규칙명') for item in target_admruls]}")
+            
+            await log(f"      👉 행정규칙 본문 조회: {len(target_admruls)}건")
 
             # 본문 상세 조회
             adm_fetch_tasks = [law_api.get_content_from_item(item) for item in target_admruls]
@@ -793,7 +843,8 @@ class Investigator:
 
         # [Phase 3] Precedent Search (Multi-Strategy)
         if 'prec' in target_dbs:
-            print(f"      📡 판례 검색: 키워드={prec_keywords}, 대상법령={found_law_titles}")
+            await log(f"      📡 판례 검색 수행 중...")
+            # print(f"      📡 판례 검색: 키워드={prec_keywords}, 대상법령={found_law_titles}")
             
             prec_tasks = []
             
@@ -824,29 +875,30 @@ class Investigator:
                         item['법령명한글'] = f"[판례] {item.get('판례내용') or item.get('사건명')}"
                         prec_candidates.append(item)
             
-            print(f"      🔎 판례 후보군: {len(prec_candidates)}건 수집됨")
+            # print(f"      🔎 판례 후보군: {len(prec_candidates)}건 수집됨")
 
             # 2. LLM Selector (Filter)
             if prec_candidates:
                 # 판례는 제목만으로 판단하기 어려울 수 있으나, 사건명에 핵심이 포함됨.
-                target_precs = await self._select_best_candidates(prec_candidates[:50], action.action)
+                # [Optimization] Selector can handle up to MAX_ANALYSIS_DOCS
+                target_precs = await self._select_best_candidates(prec_candidates[:MAX_ANALYSIS_DOCS], action.action)
             else:
                 target_precs = []
             
-            print(f"      👉 2단계 판례 본문 조회 대상: {[item.get('법령명한글') for item in target_precs]}")
+            await log(f"      👉 판례 본문 조회: {len(target_precs)}건")
 
             # 4. 본문 상세 조회
-        prec_fetch_tasks = [law_api.get_content_from_item(item) for item in target_precs]
-        if prec_fetch_tasks:
-            prec_contents = await asyncio.gather(*prec_fetch_tasks)
-            for item, (content, url, raw_data) in zip(target_precs, prec_contents):
-                title = item.get('법령명한글')
-                collected_raw_data.append(('prec', title, content, url, raw_data))
+            prec_fetch_tasks = [law_api.get_content_from_item(item) for item in target_precs]
+            if prec_fetch_tasks:
+                prec_contents = await asyncio.gather(*prec_fetch_tasks)
+                for item, (content, url, raw_data) in zip(target_precs, prec_contents):
+                    title = item.get('법령명한글')
+                    collected_raw_data.append(('prec', title, content, url, raw_data))
 
-        # [Limit] Max 50 documents to prevent token explosion
-        if len(collected_raw_data) > 50:
-            print(f"      ✂️ [Safety Limit] Too many documents ({len(collected_raw_data)}). Truncating to top 50.")
-            collected_raw_data = collected_raw_data[:50]
+        # [Limit] Max Documents to prevent token explosion
+        if len(collected_raw_data) > MAX_ANALYSIS_DOCS:
+            await log(f"      ✂️ 문서 과다로 상위 {MAX_ANALYSIS_DOCS}건만 분석합니다.")
+            collected_raw_data = collected_raw_data[:MAX_ANALYSIS_DOCS]
 
         return collected_raw_data
 
@@ -871,13 +923,23 @@ class Investigator:
 
         reviews = []
         
+        
         # [NEW] 구조적 분석 (Smart Index Scanning)
-        # 법령이나 행정규칙인 경우에만 적용 (판례는 구조가 다름)
-        if category in ['law', 'admrul']:
+        # 법령(law), 행정규칙(admrul) 그리고 이제 판례(prec)도 지원
+        if category in ['law', 'admrul', 'prec']:
             articles = law_api._parse_law_structure(raw_data)
             
-            # 조문이 너무 많으면 (예: 5개 이상) 목차 스캐닝 수행
+            # Case 1: 판례 (Precedent) - 구조 분석 결과가 있다면 항상 사용 (큰 텍스트 방지)
+            if category == 'prec' and articles:
+                 # 판례는 [판시사항, 판결요지] 만으로 구성하여 재분석
+                 # print(f"      ⚖️ [Precedent] 판례 구조 분석 (판시사항/판결요지 위주)")
+                 combined_text = "\n\n".join([f"[{a['id']}]\n{a['content']}" for a in articles])
+                 # 재귀 호출하여 짧은 텍스트 로직으로 처리
+                 return await self._analyze_full_text(combined_text, action, category, title, url, {}) 
+
+            # Case 2: 법령/행정규칙 - 조문이 너무 많으면 목차 스캐닝 수행
             if len(articles) > 5:
+                # 조문이 너무 많으면 (예: 5개 이상) 목차 스캐닝 수행
                 print(f"      📑 [Index Scan] {title} - 총 {len(articles)}개 조문 중 관련 조항 선별 중...")
                 
                 # 1. 목차(제목)만 추출
@@ -905,11 +967,40 @@ class Investigator:
                     
                     if target_articles:
                         print(f"        -> 선별된 조항: {[a['id'] for a in target_articles]}")
-                        # 선별된 조항에 대해서만 정밀 분석 수행
-                        # 텍스트를 합쳐서 분석하거나 개별 분석
-                        combined_text = "\n\n".join([f"[{a['id']}]\n{a['content']}" for a in target_articles])
-                        # 재귀적으로 분석 호출 (이제는 짧아졌으므로 바로 1번 로직으로 감)
-                        return await self._analyze_full_text(combined_text, action, category, title, url, {}) 
+                        # [NEW] 선별된 조항을 개별적으로 분석 (chunking 방지)
+                        for art in target_articles:
+                            art_prompt = f"""
+                            [Analysis Target: {category} - {title}]
+                            [{art['id']}]
+                            {art['content']}
+
+                            [User Action]
+                            {action.action}
+
+                            Extract legal grounds related to the 'User Action' from the text and respond in JSON.
+                            
+                            [Target Schema]
+                            {{
+                                "law_name": "{title}",
+                                "key_clause": "{art['id']}",
+                                "status": "Prohibited | Permitted | Conditional | Neutral | Ambiguous",
+                                "summary": "해당 조항의 핵심 내용 요약 (한글 2문장 이내)"
+                            }}
+                            If there is no relevant content at all, set the status to 'Neutral'.
+                            """
+                            art_res = await llm_client.generate(art_prompt, "", model="gpt-4o-mini", max_tokens=512)
+                            try:
+                                art_data = json_repair.loads(art_res)
+                                if art_data.get('status') != 'Neutral':
+                                    rev = DocumentReview(**art_data)
+                                    rev.url = url
+                                    reviews.append(rev)
+                            except:
+                                pass
+                        
+                        # 캐시 저장 후 반환 (chunking 단계로 가지 않음)
+                        self._analysis_cache[cache_key] = reviews
+                        return reviews
                 except Exception as e:
                     print(f"        ⚠️ Index Scan Error: {e}, Falling back to full scan.")
                     pass # 실패하면 아래 청크 로직으로 넘어감
@@ -929,16 +1020,16 @@ class Investigator:
             {{
                 "law_name": "{title}",
                 "key_clause": "관련 조항 (예: 제3조 제1항) 없으면 빈칸",
-                "status": "Prohibited | Permitted | Conditional | Neutral | Ambiguous",
+                "status": "금지 | 허용 | 조건부 | 중립 | 불명확",
                 "summary": "해당 조항의 핵심 내용 요약 (한글 2문장 이내)"
             }}
-            If there is no relevant content at all, set the status to 'Neutral'.
+            If there is no relevant content at all, set the status to '중립'.
             """
             # [MODEL: GPT-4o-mini] 읽어야 할 양이 가장 많은 부분. mini 사용 필수 (비용 절감)
             res = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
             try:
                 data = json_repair.loads(res)
-                if data.get('status') != 'Neutral':
+                if data.get('status') != '중립':
                     rev = DocumentReview(**data)
                     rev.url = url
                     reviews.append(rev)
@@ -1081,24 +1172,35 @@ class Investigator:
         print(f"      -> ✅ 최종 확보된 근거: {len(final_evidence)}건")
         return final_evidence
 
-    async def execute(self, scenario: Scenario) -> Tuple[LegalEvidence, List[DocumentReview]]:
-        print(f"\n[3-1] Investigator: Analyzing '{scenario.name}'...")
+    async def execute(self, scenario: Scenario, on_log: Optional[Callable[[str], Any]] = None) -> Tuple[LegalEvidence, List[DocumentReview]]:
+        async def log(msg):
+            if on_log: await on_log(msg)
+            
+        await log(f"\n[3-1] Investigator: Analyzing '{scenario.name}'...")
         
         # 1. Action 분해 및 검색 전략 수립
         all_reviews = []
         
         for action in scenario.actions:
-            print(f"\n    🧐 Investigating Action: {action.action}")
+            await log(f"\n    🧐 Investigating Action: {action.action}")
             
             # (1) 검색 전략 수립
             strategy = await self._plan_search(action)
+            await log(f"      📋 검색 전략: {strategy.rationale}")
             
             # (2) 키워드 확장
             keywords = await self._expand_query(action)
             prec_keywords = await self._generate_prec_keywords(action)
             
             # (3) 검색 및 법적 근거 추출 (Retry 로직 포함)
-            raw_data = await self._search_phase(keywords, prec_keywords, action, strategy)
+            raw_data = await self._search_phase(keywords, prec_keywords, action, strategy, on_log=on_log)
+            
+            # Count Types
+            cnt_law = sum(1 for r in raw_data if r[0] == 'law')
+            cnt_prec = sum(1 for r in raw_data if r[0] == 'prec')
+            cnt_adm = sum(1 for r in raw_data if r[0] == 'admrul')
+            await log(f"      📊 수집된 자료: 법령 {cnt_law}건, 판례 {cnt_prec}건, 행정규칙 {cnt_adm}건")
+
             reviews = await self._extract_evidence(raw_data, action)
             
             # (4) 검증 (Critic)
@@ -1106,10 +1208,11 @@ class Investigator:
             critique = await self._critique(action.action, docs_text)
             
             if critique.get("status") == "RETRY":
-                print(f"      🔄 재검색 요청: {critique.get('reason')}")
+                await log(f"      🔄 재검색 요청: {critique.get('reason')}")
+                # print(f"      🔄 재검색 요청: {critique.get('reason')}")
                 new_kws = critique.get("new_keywords", [])
                 # 간단히 추가 검색 수행 (Strategy 무시하고 키워드 중심)
-                raw_data_retry = await self._search_phase(new_kws, new_kws, action, strategy)
+                raw_data_retry = await self._search_phase(new_kws, new_kws, action, strategy, on_log=on_log)
                 reviews_retry = await self._extract_evidence(raw_data_retry, action)
                 reviews.extend(reviews_retry)
 
@@ -1124,6 +1227,11 @@ class Investigator:
                 seen.add(key)
                 unique_reviews.append(r)
         
+        # [Limit] Hard limit to 50 (Total)
+        if len(unique_reviews) > 50:
+             await log(f"      ✂️ 전체 수집 자료 {len(unique_reviews)}건 중 상위 50건만 사용하여 분석합니다.")
+             unique_reviews = unique_reviews[:50]
+
         # Format for Auditor
         summary_lines = []
         for r in unique_reviews:
@@ -1135,7 +1243,7 @@ class Investigator:
             relevant_laws=summary_lines,
             summary=f"발견된 법적 근거 {len(unique_reviews)}건"
         )
-        print(f"✅ [Investigator] 완료. 총 {len(unique_reviews)}건의 근거 수집.\n")
+        await log(f"✅ [Investigator] 총 {len(unique_reviews)}건의 근거 수집 완료.\n")
         return evidence, unique_reviews
 
 investigator = Investigator()
@@ -1145,8 +1253,8 @@ from typing import Optional
 
 # [수정 1] RiskReport 모델에 기본값(default) 추가하여 에러 방지
 class RiskReport(BaseModel):
-    risk_level: str = Field(default="Unknown", description="Risk Level")
-    verdict: str = Field(default="판단 보류", description="Detailed Verdict")
+    verdict: str = Field(default="Caution", description="Risk Level: Safe | Caution | Danger")
+    summary: str = Field(default="판단 보류", description="Detailed Verdict Summary")
     citation: str = Field(default="구체적 조항 없음", description="Legal Citation")
     key_issues: List[str] = Field(default_factory=list, description="Key legal issues identified")
 
@@ -1158,10 +1266,10 @@ class AdversarialDebate:
     Includes Rebuttal & Reflexion (Self-Correction) phases.
     """
 
-    # [Update] Internal debate can be in English for token efficiency
+    # [Update] Risk assessment perspective (not legal judgment)
     PROSECUTOR_PROMPT = """
-    You are a strict Prosecutor.
-    Based on the scenario and evidence, draft an Opening Statement pointing out legal violations.
+    You are a Risk Assessment Specialist focusing on legal compliance risks.
+    Based on the scenario and evidence, identify potential legal risks and compliance issues.
     Language: English.
     
     [Scenario]
@@ -1172,8 +1280,8 @@ class AdversarialDebate:
     """
 
     DEFENSE_PROMPT = """
-    You are a Defense Lawyer.
-    Based on the scenario and evidence, draft an Opening Statement defending the legality or arguing for innovation/exception.
+    You are a Business Innovation Consultant.
+    Based on the scenario and evidence, identify opportunities, regulatory exceptions, and mitigation strategies.
     Language: English.
 
     [Scenario]
@@ -1203,27 +1311,33 @@ class AdversarialDebate:
     """
 
     JUDGE_PROMPT = """
-    You are a Supreme Court Justice.
-    Review the arguments and evidence to make a final verdict.
+    You are a Business Risk Assessment Expert.
+    Review the risk analysis and business opportunities to provide a comprehensive risk evaluation report.
     
-    [Scenario]
+    [Business Scenario]
     {scenario}
     
-    [Prosecutor's Final Argument]
+    [Risk Assessment]
     {prosecutor_final}
     
-    [Defense's Final Argument]
+    [Opportunity Analysis]
     {defense_final}
     
-    Output JSON (Verdict MUST be in Korean):
+    Output JSON (MUST be in Korean):
     {{
-        "risk_level": "Safe | Caution | Danger | Unknown",
-        "confidence_score": 0 ~ 100,
-        "verdict": "Final Verdict Summary (Write in Korean). Cite specific laws.",
-        "cited_evidence": ["Article 8 of Foreign Exchange Transactions Act", ...],
-        "winning_side": "Prosecutor | Defense",
-        "key_issues": ["Issue 1 (Korean)", "Issue 2 (Korean)"]
+        "위험도": "안전 | 주의 | 위험",
+        "정확도": 0 ~ 100,
+        "평가내용": "먼저 분석된 시나리오를 간단히 설명한 후 (1-2문장), 해당 사업 모델의 법적 리스크를 평가하세요. 구체적인 법령을 인용하여 설명하세요. (한글로 작성)",
+        "인용근거": ["외국환거래법 제8조", "전자금융거래법 제3조", ...],
+        "평가결과": "리스크 우세 | 기회 우세",
+        "주요쟁점": ["주요 리스크 요인 1 (한글)", "주요 리스크 요인 2 (한글)"]
     }}
+    
+    [Important]
+    - Use ONLY Korean field names as shown above
+    - Start with a brief explanation of the analyzed scenario (1-2 sentences)
+    - Focus on business risk assessment, not legal judgment
+    - Provide actionable insights for the business
     """
 
     async def _opening_statements(self, context: str) -> Tuple[str, str]:
@@ -1271,19 +1385,35 @@ class AdversarialDebate:
         try:
             data = json_repair.loads(response)
 
-            # 인용 근거 추출 및 포맷팅
-            cited = data.get('cited_evidence', [])
+            # 한국어 필드명 매핑 (LLM이 한국어로 응답)
+            risk_level = data.get('위험도', data.get('risk_level', 'Caution'))
+            confidence = data.get('정확도', data.get('confidence_score', 0))
+            verdict_text = data.get('평가내용', data.get('verdict', '평가 내용 없음'))
+            cited = data.get('인용근거', data.get('cited_evidence', []))
+            winning = data.get('평가결과', data.get('winning_side', '평가 중'))
+            issues = data.get('주요쟁점', data.get('key_issues', []))
+
+            # 인용 근거 포맷팅
             citation_text = "\n".join(cited) if cited else "근거 없음"
 
+            # 위험도 영문 매핑 (프론트엔드 호환)
+            risk_map = {'안전': 'Safe', '주의': 'Caution', '위험': 'Danger'}
+            risk_level_en = risk_map.get(risk_level, risk_level)
+
             return RiskReport(
-                risk_level=data.get('risk_level', 'Caution'),
-                verdict=f"[{data.get('winning_side', 'Judge')}] {data.get('verdict')} (Confidence: {data.get('confidence_score')}%)",
+                verdict=risk_level_en,
+                summary=f"[{winning}] {verdict_text} (정확도: {confidence}%)",
                 citation=citation_text,
-                key_issues=data.get('key_issues', [])
+                key_issues=issues
             )
         except Exception as e:
             print(f"Judge Error: {e}")
-            return RiskReport(risk_level="Unknown", verdict=response, citation="", key_issues=[])
+            return RiskReport(
+                verdict="Caution", 
+                summary=f"평가 생성 중 오류가 발생했습니다: {e}", 
+                citation="", 
+                key_issues=["시스템 오류"]
+            )
 
     async def execute(self, scenario: Scenario, evidence: LegalEvidence) -> RiskReport:
         evidence_text = "\n".join(evidence.relevant_laws)
@@ -1316,46 +1446,93 @@ print("✅ Adversarial Debate System (Prosecutor vs Defense vs Judge) Initialize
 
 # 8. Run the Pipeline
 
+from typing import AsyncGenerator
+
+async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
+    """API Streaming Response Generator"""
+    queue = asyncio.Queue()
+
+    async def log_callback(msg: str):
+        await queue.put(json.dumps({"type": "log", "message": msg}) + "\n")
+
+    async def worker():
+        try:
+            # Init Agents
+            structurer = Structurer()
+            simulator = Simulator()
+            investigator = Investigator()
+            auditor = AdversarialDebate()
+
+            await log_callback("모듈 초기화 완료. 분석을 시작합니다...")
+
+            # 1. Structure
+            await log_callback("비즈니스 모델 구조화 (Structuring) 진행 중...")
+            model = await structurer.execute(user_input)
+            await log_callback(f"구조화 완료: {model.project_name}")
+            
+            # 2. Simulate (Main Scenario)
+            await log_callback("규제 샌드박스 시나리오 시뮬레이션 (Simulation) 시작...")
+            scenarios = await simulator.execute(model)
+            main_scenario = scenarios[0] if scenarios else None
+            
+            if not main_scenario:
+                await queue.put(json.dumps({"type": "error", "message": "시나리오 생성 실패"}) + "\n")
+                return
+
+            await log_callback("주요 시나리오 생성 완료.")
+
+            # 3. Investigate (Pass Log Callback)
+            await log_callback("법령 데이터베이스 검색 및 분석 (Investigation) 수행 중...")
+            evidence, reviews = await investigator.execute(main_scenario, on_log=log_callback)
+            await log_callback(f"검토 완료: {len(reviews)}건의 법령/판례 분석됨.")
+            
+            # 4. Audit
+            await log_callback("AI 감사관 및 변호사 토론 (Adversarial Debate) 진행 중...")
+            final_report = await auditor.execute(main_scenario, evidence)
+            await log_callback("법률 검토 최종 판결 도출 완료.")
+            
+            # 5. Extract Unique References
+            references = []
+            seen_urls = set()
+            for r in reviews:
+                if r.url and r.url not in seen_urls:
+                    references.append({"title": f"{r.law_name} {r.key_clause}", "url": r.url})
+                    seen_urls.add(r.url)
+
+            result_data = {
+                "business_model": json.loads(model.model_dump_json()),
+                "scenario": json.loads(main_scenario.model_dump_json()),
+                "evidence": [json.loads(r.model_dump_json()) for r in reviews],
+                "verdict": json.loads(final_report.model_dump_json()),
+                "references": references
+            }
+            
+            await queue.put(json.dumps({"type": "result", "data": result_data}) + "\n")
+
+        except Exception as e:
+            print(f"Worker Error: {e}")
+            await queue.put(json.dumps({"type": "error", "message": str(e)}) + "\n")
+        finally:
+            await queue.put(None) # Sentinel
+
+    # Start worker on background
+    asyncio.create_task(worker())
+
+    # Consume logs
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        yield item
+
 async def run_analysis(user_input: str) -> Dict[str, Any]:
-    """API용 엔트리포인트 함수: 결과와 참고문헌 리스트 반환"""
-    
-    # Init Agents
-    structurer = Structurer()
-    simulator = Simulator()
-    investigator = Investigator()
-    auditor = AdversarialDebate() # Use the correct class name
-
-    # 1. Structure
-    model = await structurer.execute(user_input)
-    
-    # 2. Simulate (Main Scenario)
-    scenarios = await simulator.execute(model)
-    main_scenario = scenarios[0] if scenarios else None
-    
-    if not main_scenario:
-        return {"error": "Failed to generate scenario"}
-
-    # 3. Investigate
-    evidence, reviews = await investigator.execute(main_scenario)
-    
-    # 4. Audit
-    final_report = await auditor.execute(main_scenario, evidence)
-    
-    # 5. Extract Unique References
-    references = []
-    seen_urls = set()
-    for r in reviews:
-        if r.url and r.url not in seen_urls:
-            references.append({"title": f"{r.law_name} {r.key_clause}", "url": r.url})
-            seen_urls.add(r.url)
-
-    return {
-        "model": json.loads(model.model_dump_json()),
-        "scenario": json.loads(main_scenario.model_dump_json()),
-        "evidence": evidence.relevant_laws, # List[str]
-        "verdict": json.loads(final_report.model_dump_json()),
-        "references": references
-    }
+    # Legacy wrapper if needed, or for testing
+    result = None
+    async for chunk in run_analysis_stream(user_input):
+        data = json.loads(chunk)
+        if data["type"] == "result":
+            result = data["data"]
+    return result
 
 async def run_demo():
     print("✅ Investigator Updated with Detailed Logging & Critic Loop.")
@@ -1364,22 +1541,27 @@ async def run_demo():
     user_input = "빌라나 주택 거주자가 출근한 시간 동안 자신의 빈 주차면을 외부인에게 유료로 대여해주는 IoT 주차 공유 서비스"
     print(f"User Idea: {user_input}")
 
-    result = await run_analysis(user_input)
-
-    print("\n" + "="*50)
-    print("   📢 [FINAL VERDICT] REPORT")
-    print("="*50)
-    
-    verdict = result["verdict"]
-    print(f"\n🏆 판결: {verdict.get('risk_level')}")
-    print(f"📝 요약: {verdict.get('verdict')}") # Changed from 'summary' to 'verdict' based on RiskReport
-    print(f"\n⚖️ 주요 쟁점:")
-    for issue in verdict.get('key_issues', []):
-        print(f" - {issue}")
-        
-    print(f"\n🔗 참고 문헌:")
-    for ref in result["references"]:
-        print(f" - {ref['title']}: {ref['url']}")
+    print("\n--- Streaming Output ---")
+    async for chunk in run_analysis_stream(user_input):
+        data = json.loads(chunk)
+        if data['type'] == 'log':
+            print(f"LOG: {data['message']}")
+        elif data['type'] == 'result':
+            result = data['data']
+            print("\n" + "="*50)
+            print("   📢 [FINAL VERDICT] REPORT")
+            print("="*50)
+            
+            verdict = result["verdict"]
+            print(f"\n🏆 판결: {verdict.get('verdict')}")
+            print(f"📝 요약: {verdict.get('summary')}")
+            print(f"\n⚖️ 주요 쟁점:")
+            for issue in verdict.get('key_issues', []):
+                print(f" - {issue}")
+                
+            print(f"\n🔗 참고 문헌:")
+            for ref in result["references"]:
+                print(f" - {ref['title']}: {ref['url']}")
 
 if __name__ == '__main__':
     asyncio.run(run_demo())

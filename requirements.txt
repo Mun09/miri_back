@@ -3,3 +3,6 @@ uvicorn
 python-dotenv
 openai
 pydantic
+aiohttp
+xmltodict
+json_repair
