@@ -15,6 +15,67 @@ load_dotenv()
 
 MAX_ANALYSIS_DOCS = 5
 
+# ==========================================
+# [TEST MODE SETTING]
+# Set IS_TEST = True to use mock data and save AI tokens.
+IS_TEST = True 
+# ==========================================
+
+MOCK_RESULT = {
+    "business_model": {
+        "project_name": "IoT 주차 공유 서비스 (TEST MODE)",
+        "business_type": "O2O 주차 공유 플랫폼",
+        "stakeholders": {
+            "platform_role": "중개 및 결제 시스템 제공",
+            "users": ["거주자(공유자)", "외부인(이용자)"]
+        },
+        "mechanisms": {
+            "money_flow": "이용자 -> 플랫폼 -> 거주자 (수수료 제외)",
+            "data_collection": ["차량번호", "입출차 시간", "결제 정보"],
+            "service_delivery": "IoT 센서를 통한 주차면 제어 및 앱 예약"
+        },
+        "regulatory_tags": ["주차장법", "개인정보보호법", "전자상거래법"]
+    },
+    "scenario": {
+        "name": "거주자 우선 주차면 공유 시나리오",
+        "type": "Main",
+        "actions": [
+            {"actor": "거주자 A", "action": "출근 후 빈 주차면을 앱에 등록 및 수익 창출", "object": "주차면 사용권"},
+            {"actor": "이용자 B", "action": "앱을 통해 주차면 예약 및 요금 결제", "object": "5,000원"}
+        ]
+    },
+    "evidence": [
+        {
+            "law_name": "주차장법",
+            "key_clause": "제19조의3 (부설주차장의 이용)",
+            "status": "Permitted",
+            "summary": "지방자치단체장 등은 부설주차장을 일반의 이용에 제공할 수 있으나, 영리 목적의 무허가 임대는 제한될 소지가 있음.",
+            "url": "http://www.law.go.kr"
+        },
+        {
+            "law_name": "주차장법 시행규칙",
+            "key_clause": "제6조 (주차장의 구조 및 설비 등)",
+            "status": "Conditional",
+            "summary": "주차장을 일반에 공개하는 경우 안내 표지판 설치 및 안전 조치 의무가 부과됨.",
+            "url": "http://www.law.go.kr"
+        }
+    ],
+    "verdict": {
+        "verdict": "Caution",
+        "summary": "[TEST MODE Result] 주차장법상 거주자 우선 주차면은 지자체의 조례에 따라 공유가 가능할 수도 있으나, 개인이 독단적으로 유료 대여하는 행위는 '주차장업' 등록 없이 불법으로 간주될 위험이 있습니다.",
+        "citation": "주차장법 제19조의3, 주차장법 제12조(부설주차장의 용도변경 금지 등)",
+        "key_issues": [
+            "주차장업 미등록 영업 행위 (불법 소지)",
+            "거주자 우선 주차면의 전대(Sub-lease) 제한 여부",
+            "IoT 센서 설치에 따른 시설물 변경 허가 필요성"
+        ]
+    },
+    "references": [
+        {"title": "주차장법 제19조의3", "url": "http://www.law.go.kr"},
+        {"title": "서울시 주차장 설치 및 관리 조례", "url": "http://www.law.go.kr"}
+    ]
+}
+
 try:
     from openai import AsyncOpenAI
 except ImportError:
@@ -26,7 +87,11 @@ class OpenAIClient:
         # API Key는 환경변수에서 로드하거나 여기에 직접 입력
         self.api_key = os.getenv("OPENAI_API_KEY") 
         if not self.api_key:
-            print("⚠️ Warning: OPENAI_API_KEY not found in environment variables.")
+            if IS_TEST:
+                self.api_key = "sk-dummy-key-for-test-mode"
+                print("⚠️ [TEST MODE] Using dummy API Key due to missing env var.")
+            else:
+                print("⚠️ Warning: OPENAI_API_KEY not found in environment variables.")
         
         self.client = AsyncOpenAI(api_key=self.api_key)
         self.semaphore = asyncio.Semaphore(3) # LLM 동시 요청 제한 (Rate Limit 방지, 20→3으로 감소)
@@ -986,7 +1051,7 @@ If NONE are relevant, return: []
 
         # [Limit] Max Documents to prevent token explosion
         if len(collected_raw_data) > MAX_ANALYSIS_DOCS:
-            await log(f"      ✂️ 문서 과다로 상위 {MAX_ANALYSIS_DOCS}건만 분석합니다.")
+            await log(f"자료 최적화: 수집된 {len(collected_raw_data)}건 중 상위 {MAX_ANALYSIS_DOCS}건 분석 진행")
             collected_raw_data = collected_raw_data[:MAX_ANALYSIS_DOCS]
 
         return collected_raw_data
@@ -1297,7 +1362,7 @@ Important:
             
             # (1) 검색 전략 수립
             strategy = await self._plan_search(action)
-            await log(f"      📋 검색 전략: {strategy.rationale}")
+            await log(f"검색 전략 수립 완료: {strategy.rationale}")
             
             # (2) 키워드 확장
             keywords = await self._expand_query(action)
@@ -1310,7 +1375,7 @@ Important:
             cnt_law = sum(1 for r in raw_data if r[0] == 'law')
             cnt_prec = sum(1 for r in raw_data if r[0] == 'prec')
             cnt_adm = sum(1 for r in raw_data if r[0] == 'admrul')
-            await log(f"      📊 수집된 자료: 법령 {cnt_law}건, 판례 {cnt_prec}건, 행정규칙 {cnt_adm}건")
+            await log(f"법령 자료 수집: 법률 {cnt_law}건, 판례 {cnt_prec}건, 행정규칙 {cnt_adm}건")
 
             reviews = await self._extract_evidence(raw_data, action)
             
@@ -1319,7 +1384,7 @@ Important:
             critique = await self._critique(action.action, docs_text)
             
             if critique.get("status") == "RETRY":
-                await log(f"      🔄 재검색 요청: {critique.get('reason')}")
+                await log(f"추가 검색 필요: {critique.get('reason')}")
                 # print(f"      🔄 재검색 요청: {critique.get('reason')}")
                 new_kws = critique.get("new_keywords", [])
                 # 간단히 추가 검색 수행 (Strategy 무시하고 키워드 중심)
@@ -1354,7 +1419,7 @@ Important:
             relevant_laws=summary_lines,
             summary=f"발견된 법적 근거 {len(unique_reviews)}건"
         )
-        await log(f"✅ [Investigator] 총 {len(unique_reviews)}건의 근거 수집 완료.\n")
+        await log(f"총 {len(unique_reviews)}건의 법적 근거 분석 완료")
         return evidence, unique_reviews
 
 investigator = Investigator()
@@ -1422,33 +1487,30 @@ class AdversarialDebate:
     """
 
     JUDGE_PROMPT = """
-    You are a Business Risk Assessment Expert.
-    Review the risk analysis and business opportunities to provide a comprehensive risk evaluation report.
+    You are a 'Chief Legal Officer (CLO)' responsible for the final regulatory risk assessment.
     
-    [Business Scenario]
-    {scenario}
+    [Input Data]
+    1. Scenario: {scenario}
+    2. Collected Legal Evidence: {evidence}
+    3. Prosecutor's Argument (Risk): {prosecutor_final}
+    4. Defense's Argument (Opportunity): {defense_final}
+
+    [Task]
+    Write a final 'Risk Report' that specifically links the user's actions to the legal evidence.
     
-    [Risk Assessment]
-    {prosecutor_final}
-    
-    [Opportunity Analysis]
-    {defense_final}
-    
-    Output JSON (MUST be in Korean):
+    [CRITICAL REQUIREMENT]
+    Do NOT write vague statements like "It may violate relevant laws."
+    You MUST write: "The action of [Action X] violates [Law Name Article Y] because [Reasoning]."
+
+    Output JSON (Korean):
     {{
         "위험도": "안전 | 주의 | 위험",
         "정확도": 0 ~ 100,
-        "평가내용": "먼저 분석된 시나리오를 간단히 설명한 후 (1-2문장), 해당 사업 모델의 법적 리스크를 평가하세요. 구체적인 법령을 인용하여 설명하세요. (한글로 작성)",
-        "인용근거": ["외국환거래법 제8조", "전자금융거래법 제3조", ...],
-        "평가결과": "리스크 우세 | 기회 우세",
-        "주요쟁점": ["주요 리스크 요인 1 (한글)", "주요 리스크 요인 2 (한글)"]
+        "평가내용": "전체적인 평가 요약. (1) 시나리오 설명 (2) 핵심 위법 요소 분석 (어떤 행위가 어떤 조항에 저촉되는지 구체적 명시) (3) 종합 결론. ⚠️줄글로 작성하되, 'OO법 제O조'와 같은 법적 근거를 반드시 텍스트 내에 포함시킬 것.",
+        "인용근거": ["법령명 제O조", ...],
+        "평가결과": "규제 샌드박스 신청 권장 | 즉시 사업 가능 | 규제 특례 불필요",
+        "주요쟁점": ["쟁점1: [구체적 행위] -> [위반 법령/조항] 해당 여부", "쟁점2: ..."]
     }}
-    
-    [Important]
-    - Use ONLY Korean field names as shown above
-    - Start with a brief explanation of the analyzed scenario (1-2 sentences)
-    - Focus on business risk assessment, not legal judgment
-    - Provide actionable insights for the business
     """
 
     async def _opening_statements(self, context: str) -> Tuple[str, str]:
@@ -1482,12 +1544,13 @@ class AdversarialDebate:
         p_final, d_final = await asyncio.gather(p_final_task, d_final_task)
         return p_final.strip(), d_final.strip()
 
-    async def _render_verdict(self, scenario_text: str, p_final: str, d_final: str) -> RiskReport:
+    async def _render_verdict(self, scenario_text: str, p_final: str, d_final: str, evidence_text: str) -> RiskReport:
         print("    ⚖️ [Judge] Rendering Final Verdict...")
         prompt = self.JUDGE_PROMPT.format(
             scenario=scenario_text,
             prosecutor_final=p_final,
-            defense_final=d_final
+            defense_final=d_final,
+            evidence=evidence_text
         )
 
         # [MODEL: GPT-4o-mini] 판결 생성 (비용 절감)
@@ -1549,7 +1612,7 @@ class AdversarialDebate:
         print(f"      📝 Def Final: {d_final[:100]}...")
 
         # 4. Verdict
-        return await self._render_verdict(scenario.model_dump_json(), p_final, d_final)
+        return await self._render_verdict(scenario.model_dump_json(), p_final, d_final, evidence_text)
 
 # 인스턴스 업데이트
 auditor = AdversarialDebate()
@@ -1568,21 +1631,38 @@ async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
 
     async def worker():
         try:
+            # [TEST MODE CHECK]
+            if IS_TEST:
+                await log_callback("⚠️ [TEST MODE] AI 토큰을 사용하지 않고 테스트 데이터를 로드합니다.")
+                await asyncio.sleep(1.0)
+                
+                await log_callback("비즈니스 모델 구조화 (Mocking)...")
+                await asyncio.sleep(1.0)
+                await log_callback(f"시나리오: {MOCK_RESULT['scenario']['name']}")
+                await asyncio.sleep(1.0)
+                
+                await log_callback("법령 데이터베이스 검색 (Skipped for Test)...")
+                await asyncio.sleep(1.0)
+                
+                await log_callback("✅ 테스트 분석 완료!")
+                await queue.put(json.dumps({"type": "result", "data": MOCK_RESULT}) + "\n")
+                return
+
             # Init Agents
             structurer = Structurer()
             simulator = Simulator()
             investigator = Investigator()
             auditor = AdversarialDebate()
 
-            await log_callback("모듈 초기화 완료. 분석을 시작합니다...")
+            await log_callback("분석 모듈 초기화 완료.")
 
             # 1. Structure
-            await log_callback("비즈니스 모델 구조화 (Structuring) 진행 중...")
+            await log_callback("비즈니스 모델 구조화 분석 중...")
             model = await structurer.execute(user_input)
             await log_callback(f"구조화 완료: {model.project_name}")
             
             # 2. Simulate (Main Scenario)
-            await log_callback("규제 샌드박스 시나리오 시뮬레이션 (Simulation) 시작...")
+            await log_callback("규제 샌드박스 시나리오 시뮬레이션 생성 중...")
             scenarios = await simulator.execute(model)
             main_scenario = scenarios[0] if scenarios else None
             
@@ -1590,17 +1670,17 @@ async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
                 await queue.put(json.dumps({"type": "error", "message": "시나리오 생성 실패"}) + "\n")
                 return
 
-            await log_callback("주요 시나리오 생성 완료.")
+            await log_callback("시나리오 생성 완료.")
 
             # 3. Investigate (Pass Log Callback)
-            await log_callback("법령 데이터베이스 검색 및 분석 (Investigation) 수행 중...")
+            await log_callback("법령 데이터베이스 검색 및 심층 분석 수행 중...")
             evidence, reviews = await investigator.execute(main_scenario, on_log=log_callback)
-            await log_callback(f"검토 완료: {len(reviews)}건의 법령/판례 분석됨.")
+            await log_callback(f"법적 검토 완료: {len(reviews)}건의 법령 및 판례 분석")
             
             # 4. Audit
-            await log_callback("AI 감사관 및 변호사 토론 (Adversarial Debate) 진행 중...")
+            await log_callback("AI 감사관 및 법률 전문가 토론 진행 중...")
             final_report = await auditor.execute(main_scenario, evidence)
-            await log_callback("법률 검토 최종 판결 도출 완료.")
+            await log_callback("최종 법률 검토 보고서 생성 완료.")
             
             # 5. Extract Unique References
             references = []
