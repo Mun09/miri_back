@@ -1139,7 +1139,8 @@ Important:
 """
                 
                 # [MODEL: GPT-4o-mini] 목차 스캐닝
-                res = await llm_client.generate("", prompt, model="gpt-4o-mini", max_tokens=256)
+                # System Prompt에 지침을 넣고, User Input은 간단하게 "분석 시작" 정도로 처리
+                res = await llm_client.generate(prompt, "Analyze the specific business action against the table of contents.", model="gpt-4o-mini", max_tokens=256)
                 try:
                     selected_indices = json_repair.loads(res)
                     if not isinstance(selected_indices, list): selected_indices = []
@@ -1171,7 +1172,7 @@ Important:
                             }}
                             If there is no relevant content at all, set the status to 'Neutral'.
                             """
-                            art_res = await llm_client.generate(art_prompt, "", model="gpt-4o-mini", max_tokens=512)
+                            art_res = await llm_client.generate(art_prompt, "Analyze this article.", model="gpt-4o-mini", max_tokens=512)
                             try:
                                 art_data = json_repair.loads(art_res)
                                 if art_data.get('status') != 'Neutral':
@@ -1214,7 +1215,7 @@ Important:
             If there is no relevant content at all, set the status to '중립'.
             """
             # [MODEL: GPT-4o-mini] 읽어야 할 양이 가장 많은 부분. mini 사용 필수 (비용 절감)
-            res = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
+            res = await llm_client.generate(prompt, "Analyze this text for legal risks.", model="gpt-4o-mini", max_tokens=512)
             try:
                 data = json_repair.loads(res)
                 if data.get('status') != '중립':
@@ -1253,7 +1254,7 @@ Important:
             }}
             """
             # [MODEL: GPT-4o-mini] 대량의 Chunk 처리
-            tasks.append(llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512))
+            tasks.append(llm_client.generate(prompt, "Analyze this chunk for legal relevance.", model="gpt-4o-mini", max_tokens=512))
 
         results = await asyncio.gather(*tasks)
 
