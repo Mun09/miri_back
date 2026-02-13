@@ -1379,8 +1379,8 @@ class AdversarialDebate:
             defense_final=d_final
         )
 
-        # [MODEL: GPT-4o] 판결은 가장 똑똑한 모델이 해야 함. (Final Output)
-        response = await llm_client.generate(prompt, "", model="gpt-4o", max_tokens=512)
+        # [MODEL: GPT-4o-mini] 판결 생성 (비용 절감)
+        response = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
 
         try:
             data = json_repair.loads(response)
