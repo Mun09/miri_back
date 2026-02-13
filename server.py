@@ -14,18 +14,18 @@ app = FastAPI()
 # CORS configuration
 # TEMPORARY: Allow all origins for testing
 # TODO: Restrict to specific domains in production
-origins = ["*"]
+# origins = ["*"]
 
 # PRODUCTION CONFIGURATION (uncomment when ready):
-# origins = [
-#     "http://localhost:3000",
-#     "http://localhost:8000",
-#     "https://miri-front.vercel.app",
-# ]
-# 
-# frontend_url = os.getenv("FRONTEND_URL", "")
-# if frontend_url:
-#     origins.append(frontend_url)
+origins = [
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "https://miri-front.vercel.app",
+]
+
+frontend_url = os.getenv("FRONTEND_URL", "")
+if frontend_url:
+    origins.append(frontend_url)
 
 # Log configured origins for debugging
 print(f"🔒 CORS Configured Origins: {origins}")
@@ -43,8 +43,21 @@ class IdeaRequest(BaseModel):
     idea: str
 
 @app.get("/")
-async def read_root():
-    return {"message": "MIRI Backend API is running."}
+async def root():
+    """Root endpoint for testing"""
+    return {
+        "status": "ok",
+        "message": "MIRI Backend API is running",
+        "version": "1.0",
+        "endpoints": {
+            "POST /analyze": "Analyze business idea"
+        }
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health check for Railway"""
+    return {"status": "healthy", "service": "miri-backend"}
 
 @app.post("/analyze")
 async def analyze_idea(request: IdeaRequest):
