@@ -29,24 +29,40 @@ class OpenAIClient:
             print("⚠️ Warning: OPENAI_API_KEY not found in environment variables.")
         
         self.client = AsyncOpenAI(api_key=self.api_key)
-        self.semaphore = asyncio.Semaphore(5) # LLM 동시 요청 제한 (Rate Limit 방지)
+        self.semaphore = asyncio.Semaphore(3) # LLM 동시 요청 제한 (Rate Limit 방지, 20→3으로 감소)
 
     async def generate(self, system_prompt: str, user_input: str, model: str = "gpt-4o-mini", **kwargs) -> str:
+        max_retries = 3
+        base_delay = 1.0  # 1초
+        
         async with self.semaphore:
-            try:
-                response = await self.client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_input}
-                    ],
-                    temperature=kwargs.get("temperature", 0.7),
-                    max_tokens=kwargs.get("max_tokens", 2048)
-                )
-                return response.choices[0].message.content.strip()
-            except Exception as e:
-                print(f"LLM Error ({model}): {e}")
-                return "{}" # Return empty JSON-like string on error to prevent json parsing crash
+            for attempt in range(max_retries):
+                try:
+                    response = await self.client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_input}
+                        ],
+                        temperature=kwargs.get("temperature", 0.7),
+                        max_tokens=kwargs.get("max_tokens", 2048)
+                    )
+                    return response.choices[0].message.content.strip()
+                except Exception as e:
+                    error_str = str(e)
+                    
+                    # Rate Limit 에러 처리
+                    if "rate_limit" in error_str.lower() or "429" in error_str:
+                        if attempt < max_retries - 1:
+                            delay = base_delay * (2 ** attempt)  # Exponential backoff
+                            print(f"⏳ Rate Limit 도달. {delay}초 후 재시도... ({attempt + 1}/{max_retries})")
+                            await asyncio.sleep(delay)
+                            continue
+                    
+                    print(f"LLM Error ({model}): {e}")
+                    return "{}" # Return empty JSON-like string on error to prevent json parsing crash
+            
+            return "{}"  # 모든 재시도 실패
 
 llm_client = OpenAIClient()
 
@@ -65,7 +81,7 @@ class NationalLawAPI:
         self.api_id = api_id
         self.is_mock = not bool(self.api_id)
         self._cache = {}
-        self.semaphore = asyncio.Semaphore(20) # 동시 요청 제한
+        self.semaphore = asyncio.Semaphore(5) # 동시 요청 제한 (20→5로 감소)
 
     def _force_list(self, data: Any) -> List[Any]:
         if not data: return []
@@ -456,8 +472,8 @@ class Structurer:
     """
     async def execute(self, user_input: str) -> BusinessModel:
         print("\n[1] Structuring Business Model...")
-        # [MODEL: GPT-4o] 정확한 구조화가 가장 중요함 (Initial Input)
-        response = await llm_client.generate(self.SYSTEM_PROMPT, user_input, model="gpt-4o")
+        # [MODEL: GPT-4o-mini] 사업 모델 구조화 (비용 절감)
+        response = await llm_client.generate(self.SYSTEM_PROMPT, user_input, model="gpt-4o-mini")
         try:
             return BusinessModel(**json_repair.loads(response))
         except Exception as e:
@@ -660,8 +676,8 @@ class Investigator:
 
     async def _plan_search(self, action: AtomicAction) -> SearchStrategy:
         prompt = self.STRATEGY_PROMPT.format(action=action.action)
-        # [MODEL: GPT-4o] 검색 '전략' 수립은 고지능 필요
-        response = await llm_client.generate(prompt, "", model="gpt-4o", max_tokens=512)
+        # [MODEL: GPT-4o-mini] 검색 전략 수립 (비용 절감)
+        response = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
         try:
             data = json_repair.loads(response)
             return SearchStrategy(**data)
@@ -733,8 +749,8 @@ class Investigator:
     async def _critique(self, action_text: str, evidence: List[str]) -> Dict[str, Any]:
         summary = "\n".join(evidence) if evidence else "None"
         prompt = self.CRITIC_PROMPT.format(action=action_text, evidence_summary=summary)
-        # [MODEL: GPT-4o] 충분한지 판단(Reasoning)하는 Critic은 똑똑해야 함 (환각 방지)
-        response = await llm_client.generate(prompt, "", model="gpt-4o", max_tokens=512)
+        # [MODEL: GPT-4o-mini] Critic 평가 (비용 절감)
+        response = await llm_client.generate(prompt, "", model="gpt-4o-mini", max_tokens=512)
         try:
             val = json_repair.loads(response)
             if not isinstance(val, dict): return {"status": "PASS", "new_keywords": []}
@@ -963,6 +979,8 @@ class Investigator:
                     selected_indices = json_repair.loads(res)
                     if not isinstance(selected_indices, list): selected_indices = []
                     
+                    print(f"        -> LLM 선별 결과: {selected_indices}")
+                    
                     target_articles = [articles[i] for i in selected_indices if isinstance(i, int) and 0 <= i < len(articles)]
                     
                     if target_articles:
@@ -1001,8 +1019,10 @@ class Investigator:
                         # 캐시 저장 후 반환 (chunking 단계로 가지 않음)
                         self._analysis_cache[cache_key] = reviews
                         return reviews
+                    else:
+                        print(f"        ⚠️ Index Scan: 관련 조항을 찾지 못함. Chunking으로 전환...")
                 except Exception as e:
-                    print(f"        ⚠️ Index Scan Error: {e}, Falling back to full scan.")
+                    print(f"        ⚠️ Index Scan Error: {e}, Falling back to chunking.")
                     pass # 실패하면 아래 청크 로직으로 넘어감
 
         # 1. 텍스트가 짧으면 바로 분석
