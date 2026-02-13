@@ -21,20 +21,19 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS configuration
-# TEMPORARY: Allow all origins for testing
-# TODO: Restrict to specific domains in production
-# origins = ["*"]
+# TEMPORARY: Allow all origins for testing connection issues
+origins = ["*"]
 
 # PRODUCTION CONFIGURATION (uncomment when ready):
-origins = [
-    "http://localhost:3000",
-    "http://localhost:8000",
-    "https://miri-front.vercel.app",
-]
+# origins = [
+#     "http://localhost:3000",
+#     "http://localhost:8000",
+#     "https://miri-front.vercel.app",
+# ]
 
-frontend_url = os.getenv("FRONTEND_URL", "")
-if frontend_url:
-    origins.append(frontend_url)
+# frontend_url = os.getenv("FRONTEND_URL", "")
+# if frontend_url:
+#     origins.append(frontend_url)
 
 # Log configured origins for debugging
 print(f"🔒 CORS Configured Origins: {origins}")
@@ -42,7 +41,7 @@ print(f"🔒 CORS Configured Origins: {origins}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=False,  # Set to False when using "*"
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
