@@ -17,8 +17,15 @@ MAX_ANALYSIS_DOCS = 5
 
 # ==========================================
 # [TEST MODE SETTING]
-# Set IS_TEST = True to use mock data and save AI tokens.
-IS_TEST = True 
+# Auto-enable Test Mode if OPENAI_API_KEY is missing
+api_key_check = os.getenv("OPENAI_API_KEY")
+IS_TEST_ENV = os.getenv("IS_TEST", "False").lower() == "true"
+
+if not api_key_check and not IS_TEST_ENV:
+    print("⚠️ Warning: OPENAI_API_KEY not found. Switching to TEST MODE automatically.")
+    IS_TEST = True
+else:
+    IS_TEST = IS_TEST_ENV or False
 # ==========================================
 
 MOCK_RESULT = {
