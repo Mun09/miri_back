@@ -22,14 +22,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS configuration
 # TEMPORARY: Allow all origins for testing connection issues
-origins = ["*"]
+# origins = ["*"]
 
 # PRODUCTION CONFIGURATION (uncomment when ready):
-# origins = [
-#     "http://localhost:3000",
-#     "http://localhost:8000",
-#     "https://miri-front.vercel.app",
-# ]
+origins = [
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "https://miri-front.vercel.app",
+]
 
 # frontend_url = os.getenv("FRONTEND_URL", "")
 # if frontend_url:
