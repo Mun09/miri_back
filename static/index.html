@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIRI - AI Regulatory Sandbox Simulator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --accent-color: #3b82f6;
+            --text-color: #f1f5f9;
+            --secondary-text: #94a3b8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #60a5fa, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        p.subtitle {
+            color: var(--secondary-text);
+            font-size: 1.1rem;
+        }
+
+        /* Search Box */
+        .search-box {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            margin-bottom: 40px;
+            transition: transform 0.2s;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: white;
+            padding: 15px;
+            font-size: 1rem;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            margin-bottom: 20px;
+        }
+
+        textarea:focus { border-color: var(--accent-color); }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover { background: #2563eb; }
+        button:disabled { background: #475569; cursor: not-allowed; }
+
+        /* Report Section */
+        #report { display: none; width: 100%; }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        .section-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+        .badge.Prohibited { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+        .badge.Permitted { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .badge.Conditional { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+        .badge.Unknown { background: rgba(148, 163, 184, 0.2); color: var(--secondary-text); }
+
+        .verdict-text {
+            font-size: 1.1rem;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .issues-list {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+        .issues-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            color: var(--secondary-text);
+        }
+        .issues-list li::before { content: "•"; color: var(--accent-color); margin-right: 10px; }
+
+        /* Evidence List */
+        .evidence-item {
+            padding: 15px;
+            background: rgba(15, 23, 42, 0.4);
+            border-radius: 12px;
+            margin-bottom: 10px;
+            font-size: 0.95rem;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        .evidence-icon { font-size: 1.2rem; min-width: 25px; }
+
+        /* References */
+        .ref-link {
+            display: block;
+            padding: 8px 0;
+            color: var(--accent-color);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+        .ref-link:hover { text-decoration: underline; }
+
+        /* Loading */
+        .loader {
+            display: none;
+            text-align: center;
+            margin: 40px 0;
+        }
+        .spinner {
+            width: 40px; height: 40px;
+            border: 4px solid rgba(255,255,255,0.1);
+            border-top-color: var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>MIRI Analysis</h1>
+        <p class="subtitle">AI Regulatory Sandbox Simulator & Legal Advisor</p>
+    </header>
+
+    <div class="search-box">
+        <textarea id="ideaInput" placeholder="당신의 비즈니스 아이디어를 입력하세요... (예: 주차장 공유 서비스)"></textarea>
+        <button id="analyzeBtn" onclick="analyze()">Analyze Validity</button>
+    </div>
+
+    <div class="loader" id="loader">
+        <div class="spinner"></div>
+        <p>Analyzing laws, precedents, and regulations...<br>(Takes about 30-60 seconds)</p>
+    </div>
+
+    <div id="report">
+        <!-- Verdict Card -->
+        <div class="card">
+            <div class="section-title">
+                🏆 Final Verdict
+                <span id="riskBadge" class="badge Unknown">Unknown</span>
+            </div>
+            <div id="verdictText" class="verdict-text"></div>
+            
+            <h3>⚖️ Key Issues</h3>
+            <ul id="issuesList" class="issues-list"></ul>
+        </div>
+
+        <!-- Evidence Card -->
+        <div class="card">
+            <div class="section-title">📜 Legal Evidence</div>
+            <div id="evidenceList"></div>
+        </div>
+
+        <!-- Scenario Card -->
+        <div class="card">
+            <div class="section-title">🎬 Scenario Analysis</div>
+            <div id="scenarioContent" style="color: var(--secondary-text); line-height: 1.6;"></div>
+        </div>
+
+        <!-- References Card -->
+        <div class="card">
+            <div class="section-title">🔗 References</div>
+            <div id="referencesList"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function analyze() {
+        const input = document.getElementById('ideaInput').value;
+        if (!input) return alert("Please enter an idea.");
+
+        // UI Reset
+        document.getElementById('analyzeBtn').disabled = true;
+        document.getElementById('loader').style.display = 'block';
+        document.getElementById('report').style.display = 'none';
+
+        try {
+            const response = await fetch('/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ idea: input })
+            });
+
+            const data = await response.json();
+            
+            if (data.error) throw new Error(data.error);
+
+            renderReport(data);
+
+        } catch (e) {
+            alert("Error: " + e.message);
+        } finally {
+            document.getElementById('analyzeBtn').disabled = false;
+            document.getElementById('loader').style.display = 'none';
+        }
+    }
+
+    function renderReport(data) {
+        document.getElementById('report').style.display = 'block';
+
+        // 1. Verdict
+        const verdict = data.verdict;
+        const riskLevel = verdict.risk_level || "Unknown";
+        const badge = document.getElementById('riskBadge');
+        badge.className = `badge ${riskLevel.split(' ')[0]}`; // Safe logic
+        badge.innerText = riskLevel;
+
+        document.getElementById('verdictText').innerText = verdict.verdict; // Using verdict text
+
+        // Issues
+        const issuesList = document.getElementById('issuesList');
+        issuesList.innerHTML = "";
+        (verdict.key_issues || []).forEach(issue => {
+            const li = document.createElement('li');
+            li.innerText = issue;
+            issuesList.appendChild(li);
+        });
+
+        // 2. Evidence
+        const evList = document.getElementById('evidenceList');
+        evList.innerHTML = "";
+        (data.evidence || []).forEach(line => {
+            // Parse icon and text manually since line is formatted string
+            const div = document.createElement('div');
+            div.className = 'evidence-item';
+            
+            // Remove markdown links format for simple display or parse appropriately
+            // Simple parsing: split by first space for icon
+            // Actually, existing backend returns formatted string with markdown link.
+            // Let's render it as HTML content, converting MD link to HTML
+            let htmlContent = line.replace(/\[원문\]\((.*?)\)/g, '<a href="$1" target="_blank" style="color:var(--accent-color); margin-left:5px;">[Link]</a>');
+            
+            div.innerHTML = `<span class="evidence-icon">${line.charAt(0)}</span><span>${htmlContent.substring(2)}</span>`;
+            evList.appendChild(div);
+        });
+
+        // 3. Scenario
+        const scenario = data.scenario;
+        document.getElementById('scenarioContent').innerText = 
+            `Subject: ${scenario.name}\n\n` + 
+            scenario.actions.map(a => `• [${a.actor}] ${a.action} (Object: ${a.object})`).join('\n');
+
+        // 4. References
+        const refList = document.getElementById('referencesList');
+        refList.innerHTML = "";
+        (data.references || []).forEach(ref => {
+            const a = document.createElement('a');
+            a.className = 'ref-link';
+            a.href = ref.url;
+            a.target = "_blank";
+            a.innerText = `📄 ${ref.title}`;
+            refList.appendChild(a);
+        });
+    }
+</script>
+
+</body>
+</html>
