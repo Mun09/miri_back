@@ -1084,6 +1084,11 @@ If NONE are relevant, return: []
 
         reviews = []
         
+        # [Improved Context]
+        full_action_context = f"[{action.actor}] {action.action} (대상: {action.object})"
+        print(f"      🔍 [LLM Prompt Check] Asking relevance for: {full_action_context}")
+
+        
         
         # [NEW] 구조적 분석 (Smart Index Scanning)
         # 법령(law), 행정규칙(admrul) 그리고 이제 판례(prec)도 지원
@@ -1116,7 +1121,7 @@ You are analyzing a legal document to find relevant articles for a specific busi
 {toc_text}
 
 [Business Action to Analyze]
-{action.action}
+{full_action_context}
 
 Task:
 1. Review the table of contents above
@@ -1152,10 +1157,10 @@ Important:
                             [{art['id']}]
                             {art['content']}
 
-                            [User Action]
-                            {action.action}
+                            [User Action Context]
+                            {full_action_context}
 
-                            Extract legal grounds related to the 'User Action' from the text and respond in JSON.
+                            Extract legal grounds related to the 'User Action Context' from the text and respond in JSON.
                             
                             [Target Schema]
                             {{
@@ -1194,10 +1199,10 @@ Important:
             [Analysis Target: {category} - {title}]
             {text}
 
-            [User Action]
-            {action.action}
+            [User Action Context]
+            {full_action_context}
 
-            Extract legal grounds related to the 'User Action' from the text and respond in JSON.
+            Extract legal grounds related to the 'User Action Context' from the text and respond in JSON.
             
             [Target Schema]
             {{
@@ -1233,10 +1238,10 @@ Important:
             [Analysis Target: {category} - {title} (Part {i+1}/{len(chunks)})]
             {chunk}
 
-            [User Action]
-            {action.action}
+            [User Action Context]
+            {full_action_context}
 
-            If there are legal grounds (prohibition, permission, penalty, etc.) related to the 'User Action' in this text chunk, extract them.
+            If there are legal grounds (prohibition, permission, penalty, etc.) related to the 'User Action Context' in this text chunk, extract them.
             If it's difficult to judge due to broken context, set the status to 'Neutral'.
             
             [Target Schema]
