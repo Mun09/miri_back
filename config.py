@@ -7,8 +7,11 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Maximum number of documents to analyze in detail
-MAX_ANALYSIS_DOCS = 5
+# Maximum number of total documents to analyze in detail (Final Limit)
+MAX_ANALYSIS_DOCS = 20
+
+# Maximum number of search results per API call (Law, Prec, etc.)
+MAX_SEARCH_RESULTS_PER_SOURCE = 10
 
 # Test Mode Configuration
 api_key_check = os.getenv("OPENAI_API_KEY")

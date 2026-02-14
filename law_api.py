@@ -8,6 +8,7 @@ import aiohttp
 import xmltodict
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 from typing import Any, List, Dict, Tuple
+from config import MAX_SEARCH_RESULTS_PER_SOURCE
 
 
 class NationalLawAPI:
@@ -51,7 +52,7 @@ class NationalLawAPI:
             "target": target,
             "type": "XML",
             "query": query,
-            "display": 5,
+            "display": kwargs.get('display', MAX_SEARCH_RESULTS_PER_SOURCE),
             "nw": 3  # 기본값: 현행 법령만 검색
         }
         params.update(kwargs)  # JO 등 추가 파라미터 병합
