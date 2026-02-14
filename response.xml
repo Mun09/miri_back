@@ -1,0 +1,31 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="ko" xml:lang="ko">
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge">      
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">  
+<link rel="stylesheet" type="text/css" href="/DRF/css/common.css">
+<script type="text/javascript" src="/DRF/js/common/jquery/jquery.js"></script>
+	<script type="text/javascript" src="/DRF/js/common/jquery/jquery.form.js"></script>
+	<script type="text/javascript" src="/DRF/js/ext/adapter/ext/ext-base.js"></script>
+	<script type="text/javascript" src="/DRF/js/ext/ext-all.js"></script>
+	<script type="text/javascript" src="/DRF/js/common.js"></script>
+	<script type="text/javascript" src="/DRF/js/common-ex.js"></script>
+	<script type="text/javascript" src="/DRF/js/CookieUtil.js"></script>
+<title>국가법령정보 공동활용</title>
+</head> 
+<body> 
+<!-- //error500 -->
+<div id="error500">
+	<h1><a href="#"><img src="/DRF/images/topmenu/LSO_top_logo.gif" alt="국가법령정보 공동활용"></a></h1>
+	<div class="error_txt">
+		<h2>페이지 접속에 실패하였습니다.</h2>
+		<p>접속하신 기관에 문의하여 주시기 바랍니다.<br/>또는&nbsp;
+		<a href="https://www.law.go.kr" style = "font-style:normal; font-size: 14px; color: #175ec9; font-weight: 600; text-decoration:underline;">국가법령정보센터(바로가기)</a>를 이용해 주세요.
+		</p>
+		<em>법제처 공동활용 유지보수팀(02-2109-6446)</em>
+	</div>
+</div>
+<!-- error500// -->
+ 
+</body>
+</html>
