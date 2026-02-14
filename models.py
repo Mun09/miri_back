@@ -4,22 +4,23 @@ Pydantic Models for MIRI Legal Advisory System
 from pydantic import BaseModel, Field
 from typing import List
 
-# Business Model / Consultation Case Models
-class Stakeholders(BaseModel):
-    platform_role: str = Field(description="Role of the platform")
-    users: List[str] = Field(description="List of user types")
+# Unified Consultation Model (Replaces BusinessModel)
+class ConsultationStakeholders(BaseModel):
+    parties_involved: str = Field(description="Parties involved")
+    roles: List[str] = Field(description="Roles of parties")
 
-class Mechanisms(BaseModel):
-    money_flow: str = Field(description="How money moves")
-    data_collection: List[str] = Field(description="What data is collected")
-    service_delivery: str = Field(description="How service is delivered")
+class ConsultationKeyElements(BaseModel):
+    money_or_assets: str = Field(default="", description="Related money or assets")
+    data_or_information: List[str] = Field(default_factory=list, description="Related data/info")
+    actions_or_services: str = Field(default="", description="Core actions or services")
 
 class BusinessModel(BaseModel):
-    project_name: str = Field(description="Name of the project")
-    business_type: str = Field(description="Type of business")
-    stakeholders: Stakeholders
-    mechanisms: Mechanisms
-    regulatory_tags: List[str] = Field(description="List of regulatory keywords")
+    consultation_type: str = Field(description="Type of consultation")
+    project_name: str = Field(description="Case title")
+    case_summary: str = Field(description="Summary of the case")
+    stakeholders: ConsultationStakeholders
+    key_elements: ConsultationKeyElements
+    regulatory_tags: List[str] = Field(description="Legal keywords")
 
 # Scenario Models
 class AtomicAction(BaseModel):

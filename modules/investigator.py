@@ -85,21 +85,27 @@ class Investigator:
     """
 
     SELECTOR_PROMPT = """
-Below is a list of {count} laws/rules.
+    You are an expert 'Legal Researcher' responsible for selecting relevant laws and precedents.
+    
+    [Task]
+    Review the provided list of law/precedent titles and select ALL items that are RELEVANT to the user's situation.
+    
+    [Selection Criteria]
+    1. Direct Relevance: The title explicitly mentions the issue (e.g., "unfair dismissal", "hit-and-run").
+    2. Broader Relevance: The law governs the domain (e.g., "Labor Standards Act" for firing).
+    3. Be Generous: If in doubt, INCLUDE it. It's better to analyze more than to miss critical evidence.
+    
+    [Input Format]
+    User will provide:
+    - User Action/Scenario
+    - List of Candidates (numbered)
 
-Business Action:
-{action}
-
-Available Laws:
-{candidates}
-
-Task: Select ALL laws that are relevant to this business action. Return their exact names as a JSON array.
-
-Output format:
-["법령명1", "법령명2", "법령명3"]
-
-If NONE are relevant, return: []
-"""
+    [Output Format]
+    Return ONLY a JSON array of the exact strings (names) selected from the list.
+    Example: ["Title 1", "Title 3"]
+    
+    If NONE are relevant, return: []
+    """
 
     KEYWORD_GEN_PROMPT = """
     User Situation/Action: "{action}"
@@ -246,17 +252,22 @@ If NONE are relevant, return: []
         if len(candidate_names) > 10:
             print(f"         ... 외 {len(candidate_names) - 10}개")
         
-        prompt = self.SELECTOR_PROMPT.format(
-            action=action_text,
-            count=len(candidate_names),
-            candidates="\n".join([f"{i+1}. {name}" for i, name in enumerate(candidate_names)])
-        )
+        system_prompt = self.SELECTOR_PROMPT
+        user_input_prompt = f"""
+Candidate Count: {len(candidate_names)}
+
+[User Action/Scenario]
+{action_text}
+
+[List of Candidates]
+{chr(10).join([f"{i+1}. {name}" for i, name in enumerate(candidate_names)])}
+"""
         
-        print(f"      📋 [DEBUG] Selector Prompt:\n{prompt[:500]}...\n")  # 프롬프트 일부 출력
+        # print(f"      📋 [DEBUG] Selector Prompt:\n{user_input_prompt[:500]}...\n")  # 프롬프트 일부 출력 (Verbose)
         
         try:
             # [MODEL: GPT-4o-mini] 목록 중 선택(Selection)은 mini도 잘함
-            response = await llm_client.generate("", prompt, model="gpt-4o-mini", max_tokens=1024)  # 프롬프트를 user_input에
+            response = await llm_client.generate(system_prompt, user_input_prompt, model="gpt-4o-mini", max_tokens=1024)
             
             print(f"      🔍 [Selector] LLM 전체 응답:\n{response}\n")  # 전체 응답 출력
             

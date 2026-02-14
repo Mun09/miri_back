@@ -85,6 +85,18 @@ class NationalLawAPI:
             print(f"        -> ⚠️ 결과 파싱 실패 또는 0건")
             return []
 
+    async def get_content_from_item(self, item: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
+        """검색 결과 아이템에서 본문 링크를 찾아 내용을 가져옴"""
+        link = item.get('법령상세링크') or item.get('판례상세링크')
+        if not link:
+            return "", "", {}
+            
+        url = f"http://www.law.go.kr{link}".replace("HTML", "XML")
+        data = await self._fetch(url)
+        content = self._parse_xml_to_text(data)
+        
+        return content, url, data
+
     def _clean_html(self, text: str) -> str:
         """HTML 태그 제거 + 불필요한 메타데이터 정리"""
         if not text: return ""
