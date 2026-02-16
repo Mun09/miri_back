@@ -101,8 +101,8 @@ class Investigator:
     - List of Candidates (numbered)
 
     [Output Format]
-    Return ONLY a JSON array of the exact strings (names) selected from the list.
-    Example: ["Title 1", "Title 3"]
+    Return ONLY a JSON array of the INDICES (integers) corresponding to the selected items.
+    Example: [1, 3, 5]
     
     If NONE are relevant, return: []
     """
@@ -271,29 +271,44 @@ Candidate Count: {len(candidate_names)}
             
             print(f"      🔍 [Selector] LLM 전체 응답:\n{response}\n")  # 전체 응답 출력
             
-            selected_names = json_repair.loads(response)
-            if not isinstance(selected_names, list): selected_names = [str(selected_names)]
+            selected_indices = json_repair.loads(response)
+            
+            # Ensure it's a list
+            if not isinstance(selected_indices, list):
+                if isinstance(selected_indices, (int, str)):
+                    selected_indices = [selected_indices]
+                else:
+                    selected_indices = []
 
-            print(f"      🤖 [Selector] LLM 선택: {selected_names}")
+            print(f"      🤖 [Selector] LLM 선택 인덱스: {selected_indices}")
 
             final_items = []
-            for name in selected_names:
-                # 이름이 일치하는 아이템 찾기 (부분 일치 (in)는 위험할 수 있으니, 최대한 정확히 매칭 시도)
-                for item in candidates:
-                    item_name = item.get('법령명한글') or item.get('행정규칙명')
-                    # LLM이 이름을 조금 잘라서 말할 수도 있으므로 contains 체크
-                    if name in item_name or item_name in name:
-                        final_items.append(item)
-                        break
+            seen_indices = set()
+
+            for idx in selected_indices:
+                try:
+                    # Parse integer if it's a string like "1"
+                    idx_int = int(str(idx).strip())
+                    
+                    if idx_int in seen_indices: continue
+                    
+                    # 1-based index to 0-based
+                    if 1 <= idx_int <= len(candidates):
+                        final_items.append(candidates[idx_int - 1])
+                        seen_indices.add(idx_int)
+                except (ValueError, TypeError):
+                    continue
+            
+            print(f"      ✅ [Selector] 최종 매칭: {len(final_items)}건")
             
             if not final_items:
-                print(f"      ⚠️ [Selector] 매칭 실패. 상위 10개 사용 (Fallback)")
-                return candidates[:10]
+                print(f"      ⚠️ [Selector] 선택 결과 없음. 상위 5개 사용 (Fallback)")
+                return candidates[:5]
             
             return final_items
         except Exception as e:
             print(f"      ⚠️ Selector Error: {e}")
-            return candidates[:10]
+            return candidates[:5]
 
     async def _critique(self, action_text: str, evidence: List[str]) -> Dict[str, Any]:
         summary = "\n".join(evidence) if evidence else "None"
@@ -402,9 +417,36 @@ Candidate Count: {len(candidate_names)}
                     collected_raw_data.append(('prec', title, content, url, raw_data))
 
         # [Limit] Max Documents
+        # [Balanced Selection] Quota System
         if len(collected_raw_data) > MAX_ANALYSIS_DOCS:
-            await log(f"자료 최적화: 수집된 {len(collected_raw_data)}건 중 상위 {MAX_ANALYSIS_DOCS}건 분석 진행")
-            collected_raw_data = collected_raw_data[:MAX_ANALYSIS_DOCS]
+            # Categorize
+            laws = [x for x in collected_raw_data if x[0] == 'law' or x[0] == 'ai_result'] # ai_result counts as law
+            admruls = [x for x in collected_raw_data if x[0] == 'admrul']
+            precs = [x for x in collected_raw_data if x[0] == 'prec']
+            others = [x for x in collected_raw_data if x[0] not in ('law', 'ai_result', 'admrul', 'prec')]
+
+            # Target Quotas (approx: Law 40%, Prec 40%, AdmRul 20%)
+            q_law = int(MAX_ANALYSIS_DOCS * 0.4)
+            q_prec = int(MAX_ANALYSIS_DOCS * 0.4)
+            q_admrul = MAX_ANALYSIS_DOCS - q_law - q_prec
+
+            final_selection = []
+            
+            # 1. Fill Quotas
+            final_selection.extend(laws[:q_law])
+            final_selection.extend(precs[:q_prec])
+            final_selection.extend(admruls[:q_admrul])
+            
+            # 2. Fill Remaining Slots with Leftovers
+            remaining_slots = MAX_ANALYSIS_DOCS - len(final_selection)
+            if remaining_slots > 0:
+                leftovers = laws[q_law:] + precs[q_prec:] + admruls[q_admrul:] + others
+                final_selection.extend(leftovers[:remaining_slots])
+            
+            await log(f"자료 최적화 (Balance): 법령 {min(len(laws), q_law)}건, 판례 {min(len(precs), q_prec)}건, 규칙 {min(len(admruls), q_admrul)}건 등 총 {len(final_selection)}건 분석")
+            collected_raw_data = final_selection
+        else:
+            await log(f"수집된 자료 {len(collected_raw_data)}건 전체 분석 진행")
 
         return collected_raw_data
 

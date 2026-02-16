@@ -61,16 +61,19 @@ async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
             
             Output JSON Schema:
             {{
-                "name": "Scenario Name (Short)",
+                "name": "Scenario Name (Short, KOREAN)",
                 "type": "General | Business | Criminal | Civil",
                 "actions": [
                     {{
-                        "actor": "Primary Subject (e.g., User, Employer, Driver)",
-                        "action": "Legal Action (e.g., firing without notice, hit-and-run)",
-                        "object": "Target Object (e.g., Employee, Pedestrian)"
+                        "actor": "Primary Subject (KOREAN, e.g., 사용자, 고용주, 운전자)",
+                        "action": "Legal Action (KOREAN, e.g., 해고 통보, 뺑소니)",
+                        "object": "Target Object (KOREAN, e.g., 직원, 보행자)"
                     }}
                 ]
             }}
+            [Important]
+            - **All string values (name, actor, action, object) MUST be in KOREAN.**
+            - Do not use English for the content.
             """
             from llm_client import llm_client # Lazy import
             import json_repair
