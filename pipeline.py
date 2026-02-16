@@ -54,9 +54,20 @@ async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
             # [Optimization] Simulator 제거 -> Direct Extraction
             # 사용자의 의도를 왜곡하지 않기 위해 Simulator를 거치지 않고 바로 Action을 추출합니다.
             scenario_prompt = f"""
-            Extract the core legal actions from the user's query.
-            Do NOT add fictional details or assumptions. Strive for factual accuracy based ONLY on the input.
+            Extract the core legal **dispute** or **action** from the user's query.
             
+            [Guidelines]
+            1. **Identify the Aggressor/Initiator**: Who is taking the legal action or making the demand?
+               - If the user is being sued/demanded, the **Opponent** is the 'actor'.
+               - Example: "Landlord told me to leave" -> Actor: **Landlord**, Action: **Eviction Request** (NOT Tenant/Leaving)
+               - Example: "Can I suing him?" -> Actor: **User**, Action: **Lawsuit**
+            
+            2. **Include Context**: The 'action' string should include key legal qualifiers (e.g., "after 5 years", "without notice").
+               - Bad: "Leaving"
+               - Good: "Eviction Request after 5 years lease" (5년 임대차 후 퇴거 요청)
+            
+            3. **Korean Output**: All values must be in Korean.
+
             User Input: "{user_input}"
             
             Output JSON Schema:
@@ -65,15 +76,12 @@ async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
                 "type": "General | Business | Criminal | Civil",
                 "actions": [
                     {{
-                        "actor": "Primary Subject (KOREAN, e.g., 사용자, 고용주, 운전자)",
-                        "action": "Legal Action (KOREAN, e.g., 해고 통보, 뺑소니)",
-                        "object": "Target Object (KOREAN, e.g., 직원, 보행자)"
+                        "actor": "Initiator of the action (KOREAN)",
+                        "action": "Legal Action with Context (KOREAN)",
+                        "object": "Target of the action (KOREAN)"
                     }}
                 ]
             }}
-            [Important]
-            - **All string values (name, actor, action, object) MUST be in KOREAN.**
-            - Do not use English for the content.
             """
             from llm_client import llm_client # Lazy import
             import json_repair
