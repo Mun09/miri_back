@@ -61,6 +61,7 @@ async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
                - If the user is being sued/demanded, the **Opponent** is the 'actor'.
                - Example: "Landlord told me to leave" -> Actor: **Landlord**, Action: **Eviction Request** (NOT Tenant/Leaving)
                - Example: "Can I suing him?" -> Actor: **User**, Action: **Lawsuit**
+               - Example: "Police reported me for noise" -> Actor: **Police/Neighbor**, Action: **Noise Complaint Filing**
             
             2. **Include Context**: The 'action' string should include key legal qualifiers (e.g., "after 5 years", "without notice").
                - Bad: "Leaving"
@@ -105,7 +106,10 @@ async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
             # 3. Investigate (Pass Log Callback)
             await log_callback("법령 데이터베이스 검색 및 심층 분석 수행 중...")
             evidence, reviews = await investigator.execute(main_scenario, on_log=log_callback)
-            await log_callback(f"법적 검토 완료: {len(reviews)}건의 법령 및 판례 분석")
+            
+            # Count unique documents for logging
+            unique_docs = len(set(r.url for r in reviews if r.url)) or len(reviews)
+            await log_callback(f"법적 검토 완료: {unique_docs}건의 유효 법령/판례 확보")
             
             # 4. Audit
             await log_callback("법률 전문가 다각도 분석 및 종합 검토 중...")

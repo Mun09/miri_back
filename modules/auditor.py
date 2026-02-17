@@ -83,7 +83,8 @@ class AdversarialDebate:
     
     [Input Data]
     1. Legal Situation: {scenario}
-    2. Collected Legal Evidence: {evidence}
+    2. Collected Legal Evidence (Indexed): 
+    {evidence}
     3. Risk Analysis (Legal Concerns): {prosecutor_final}
     4. Rights Analysis (Legal Protections): {defense_final}
 
@@ -97,6 +98,10 @@ class AdversarialDebate:
     1. **Statute-Centric**: Base your advice primarily on Acts, Decrees, and Rules.
     2. **Precedents**: Use precedents as supporting examples to explain *how* the law is applied.
     3. **Missing Evidence**: If no specific law is found, explain general legal principles instead of saying "I don't know."
+    4. **Citations**: 
+       - You MUST cite the source using the index number from the [Input Data].
+       - Format: "근로기준법에 따르면[1]" or "대법원은 판시하였습니다[2]".
+       - DO NOT invent URLs. Only use the [Index] reference.
 
     [Task]
     Provide a comprehensive legal advisory opinion.
@@ -105,8 +110,8 @@ class AdversarialDebate:
     {{
         "위험도": "안전 | 주의 | 위험",
         "정확도": 0 ~ 100,
-        "평가내용": "MIRI의 자문의견.\\n\\n안녕하세요, MIRI 법률 자문입니다. 의뢰하신 내용을 꼼꼼히 검토해 보았습니다.\\n\\n1. **상황 분석**: (의뢰인의 상황을 공감하며 요약)\\n2. **법적 검토**: (관련 법령과 행정규칙을 근거로 위법/적법 여부를 쉽게 설명)\\n3. **판례 경향**: (관련 판례가 있다면 '이런 경우에는 법원이 이렇게 판단하는 경향이 있습니다'라고 소개)\\n4. **대응 방안**: (의뢰인이 취할 수 있는 구체적인 행동이나 권리 구제 방안 제안)\\n5. **종합 결론**: (최종적인 조언과 함게 마무리 인사)",
-        "인용근거": ["근로기준법 제23조", "대법원 20xx다xxxxx (참고)", ...],
+        "평가내용": "MIRI의 자문의견.\\n\\n안녕하세요, MIRI 법률 자문입니다. 의뢰하신 내용을 꼼꼼히 검토해 보았습니다.\\n\\n1. **상황 분석**: (의뢰인의 상황을 공감하며 요약)\\n2. **법적 검토**: (관련 법령과 행정규칙을 근거로 위법/적법 여부를 쉽게 설명. **반드시 [1], [2] 와 같이 인덱스 인용 표기**)\\n3. **판례 경향**: (관련 판례가 있다면 '이런 경우에는 법원이 이렇게 판단하는 경향이 있습니다'라고 소개)\\n4. **대응 방안**: (의뢰인이 취할 수 있는 구체적인 행동이나 권리 구제 방안 제안)\\n5. **종합 결론**: (최종적인 조언과 함게 마무리 인사)",
+        "인용근거": ["1. 근로기준법 제23조", "2. 대법원 20xx다xxxxx (참고)", ...],
         "평가결과": "부당해고 구제 신청 가능 | 계약서 수정 권고 | 법적 리스크 낮음 등 (짧은 요약)",
         "주요쟁점": ["해고 예고 의무 위반 여부", "정당한 해고 사유 존재 여부", ...]
     }}
@@ -184,8 +189,12 @@ class AdversarialDebate:
             )
 
     async def execute(self, scenario: Scenario, evidence: LegalEvidence) -> RiskReport:
-        evidence_text = "\n".join(evidence.relevant_laws)
-        if not evidence_text: evidence_text = "No specific laws found."
+        # Create indexed evidence list
+        evidence_list = evidence.relevant_laws
+        if not evidence_list:
+            evidence_text = "No specific laws found."
+        else:
+            evidence_text = "\n".join([f"{i+1}. {item}" for i, item in enumerate(evidence_list)])
 
         context = {
             "scenario": scenario.model_dump_json(),
