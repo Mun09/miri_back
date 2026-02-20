@@ -7,3 +7,7 @@ aiohttp==3.13.3
 xmltodict==1.0.2
 json_repair==0.57.1
 slowapi==0.1.9
+langchain
+langchain-openai
+langchain-community
+langgraph

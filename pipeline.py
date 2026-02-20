@@ -1,160 +1,76 @@
 """
-Pipeline Module - Analysis Pipeline for MIRI Legal Advisory System
-분석 파이프라인 모듈
+Pipeline Module - Analysis Pipeline for MIRI Legal Advisory System using LangGraph
 """
 import json
 import asyncio
 from typing import AsyncGenerator, Dict, Any
 
 from config import IS_TEST, MOCK_RESULT
-from modules import Structurer, Investigator, AdversarialDebate
+from modules.graph_agent import miri_graph, MiriState
 
-
-async def run_analysis_stream(user_input: str) -> AsyncGenerator[str, None]:
-    """API Streaming Response Generator"""
-    queue = asyncio.Queue()
-
-    async def log_callback(msg: str):
-        await queue.put(json.dumps({"type": "log", "message": msg}) + "\n")
-
-    async def worker():
-        try:
-            # [TEST MODE CHECK]
-            if IS_TEST:
-                await log_callback("⚠️ [TEST MODE] AI 토큰을 사용하지 않고 테스트 데이터를 로드합니다.")
-                await asyncio.sleep(1.0)
-                
-                await log_callback("비즈니스 모델 구조화 (Mocking)...")
-                await asyncio.sleep(1.0)
-                await log_callback(f"시나리오: {MOCK_RESULT['scenario']['name']}")
-                await asyncio.sleep(1.0)
-                
-                await log_callback("법령 데이터베이스 검색 (Skipped for Test)...")
-                await asyncio.sleep(1.0)
-                
-                await log_callback("✅ 테스트 분석 완료!")
-                await queue.put(json.dumps({"type": "result", "data": MOCK_RESULT}) + "\n")
-                return
-
-            # Init Agents
-            structurer = Structurer()
-            investigator = Investigator()
-            auditor = AdversarialDebate()
-
-            await log_callback("분석 모듈 초기화 완료.")
-
-            # 1. Structure
-            await log_callback("법률 상담 케이스 구조화 및 분석 중...")
-            model = await structurer.execute(user_input)
-            await log_callback(f"케이스 분석 완료: {model.project_name}")
+async def run_analysis_stream(user_input: str, what_ifs: list = None, thread_id: str = "default_thread") -> AsyncGenerator[str, None]:
+    """API Streaming Response Generator using LangGraph"""
+    what_ifs = what_ifs or []
+    initial_state = {
+        "user_input": user_input,
+        "what_if_toggles": what_ifs,
+    }
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    try:
+        # [TEST MODE CHECK]
+        if IS_TEST:
+            yield json.dumps({"type": "log", "message": "⚠️ [TEST MODE] AI 토큰을 사용하지 않고 테스트 데이터를 로드합니다."}) + "\n"
+            await asyncio.sleep(1.0)
+            yield json.dumps({"type": "result", "data": MOCK_RESULT}) + "\n"
+            return
             
-            # 2. Extract Scenario (Direct from User Input)
-            await log_callback("사용자 질의 핵심 법률 행위 추출 중...")
-            
-            # [Optimization] Simulator 제거 -> Direct Extraction
-            # 사용자의 의도를 왜곡하지 않기 위해 Simulator를 거치지 않고 바로 Action을 추출합니다.
-            scenario_prompt = f"""
-            Extract the core legal **dispute** or **action** from the user's query.
-            
-            [Guidelines]
-            1. **Identify the Aggressor/Initiator**: Who is taking the legal action or making the demand?
-               - If the user is being sued/demanded, the **Opponent** is the 'actor'.
-               - Example: "Landlord told me to leave" -> Actor: **Landlord**, Action: **Eviction Request** (NOT Tenant/Leaving)
-               - Example: "Can I suing him?" -> Actor: **User**, Action: **Lawsuit**
-               - Example: "Police reported me for noise" -> Actor: **Police/Neighbor**, Action: **Noise Complaint Filing**
-            
-            2. **Include Context**: The 'action' string should include key legal qualifiers (e.g., "after 5 years", "without notice").
-               - Bad: "Leaving"
-               - Good: "Eviction Request after 5 years lease" (5년 임대차 후 퇴거 요청)
-            
-            3. **Korean Output**: All values must be in Korean.
+        async for event in miri_graph.astream(initial_state, config=config):
+            for node_name, node_state in event.items():
+                if node_name == "structurer":
+                    intent = node_state.get("current_intent", "modify_roadmap")
+                    if intent == "modify_roadmap":
+                        yield json.dumps({"type": "log", "message": "✅ [분석] 사업 모델 수정 및 구조화 진행 중..."}) + "\n"
+                    else:
+                        yield json.dumps({"type": "log", "message": "💬 [질의] 단순 질문으로 파악되었습니다. 답변을 생성합니다..."}) + "\n"
+                        
+                elif node_name == "qa_node":
+                    # Emit chat message event
+                    chat_msg = node_state.get("chat_response", "이해했습니다.")
+                    yield json.dumps({"type": "chat_message", "message": chat_msg}) + "\n"
+                    
+                elif node_name == "investigator":
+                    yield json.dumps({"type": "log", "message": "🔬 [조사] 관련 법령, 부처, 증빙 서류를 새롭게 검색하고 정리합니다..."}) + "\n"
+                    
+                elif node_name == "auditor":
+                    yield json.dumps({"type": "log", "message": "⚖️ [자문] 로드맵과 리스크 스코어를 최신 상태로 갱신했습니다."}) + "\n"
+                    
+                    # Construct Final Result
+                    bm = node_state.get("business_model")
+                    risk = node_state.get("risk_evaluation")
+                    
+                    result_data = {
+                        "business_model": bm.model_dump() if bm else {},
+                        "what_ifs": [w.model_dump() for w in node_state.get("what_ifs", [])],
+                        "cross_domains": [c.model_dump() for c in node_state.get("cross_domains", [])],
+                        "roadmap": [r.model_dump() for r in node_state.get("roadmap", [])],
+                        "risk_evaluation": risk.model_dump() if risk else {},
+                        "references": [ref.model_dump() for ref in node_state.get("references", [])]
+                    }
+                    
+                    # We also send the chat response so the frontend knows the roadmap was updated
+                    chat_msg = node_state.get("chat_response", "로드맵이 업데이트되었습니다.")
+                    yield json.dumps({"type": "chat_message", "message": chat_msg}) + "\n"
+                    yield json.dumps({"type": "result", "data": result_data}) + "\n"
+                    
+    except Exception as e:
+        print(f"Graph Execution Error: {e}")
+        yield json.dumps({"type": "error", "message": str(e)}) + "\n"
 
-            User Input: "{user_input}"
-            
-            Output JSON Schema:
-            {{
-                "name": "Scenario Name (Short, KOREAN)",
-                "type": "General | Business | Criminal | Civil",
-                "actions": [
-                    {{
-                        "actor": "Initiator of the action (KOREAN)",
-                        "action": "Legal Action with Context (KOREAN)",
-                        "object": "Target of the action (KOREAN)"
-                    }}
-                ]
-            }}
-            """
-            from llm_client import llm_client # Lazy import
-            import json_repair
-            from models import Scenario
-            
-            try:
-                sc_res = await llm_client.generate(scenario_prompt, "Extract legal actions.", model="gpt-4o-mini", max_tokens=256)
-                sc_data = json_repair.loads(sc_res)
-                main_scenario = Scenario(**sc_data)
-            except Exception as e:
-                print(f"Scenario Extraction Error: {e}")
-                # Fallback
-                main_scenario = Scenario(
-                    name="Direct Query", 
-                    type="General", 
-                    actions=[{"actor": "User", "action": user_input, "object": "Legal Issue"}]
-                )
-
-            await log_callback(f"시나리오 추출 완료: {main_scenario.name}")
-
-            # 3. Investigate (Pass Log Callback)
-            await log_callback("법령 데이터베이스 검색 및 심층 분석 수행 중...")
-            evidence, reviews = await investigator.execute(main_scenario, on_log=log_callback)
-            
-            # Count unique documents for logging
-            unique_docs = len(set(r.url for r in reviews if r.url)) or len(reviews)
-            await log_callback(f"법적 검토 완료: {unique_docs}건의 유효 법령/판례 확보")
-            
-            # 4. Audit
-            await log_callback("법률 전문가 다각도 분석 및 종합 검토 중...")
-            final_report = await auditor.execute(main_scenario, evidence)
-            await log_callback("최종 법률 자문 보고서 생성 완료.")
-            
-            # 5. Extract Unique References
-            references = []
-            seen_urls = set()
-            for r in reviews:
-                if r.url and r.url not in seen_urls:
-                    references.append({"title": f"{r.law_name} {r.key_clause}", "url": r.url})
-                    seen_urls.add(r.url)
-
-            result_data = {
-                "business_model": json.loads(model.model_dump_json()),
-                "scenario": json.loads(main_scenario.model_dump_json()),
-                "evidence": [json.loads(r.model_dump_json()) for r in reviews],
-                "verdict": json.loads(final_report.model_dump_json()),
-                "references": references
-            }
-            
-            await queue.put(json.dumps({"type": "result", "data": result_data}) + "\n")
-
-        except Exception as e:
-            print(f"Worker Error: {e}")
-            await queue.put(json.dumps({"type": "error", "message": str(e)}) + "\n")
-        finally:
-            await queue.put(None)  # Sentinel
-
-    # Start worker on background
-    asyncio.create_task(worker())
-
-    # Consume logs
-    while True:
-        item = await queue.get()
-        if item is None:
-            break
-        yield item
-
-
-async def run_analysis(user_input: str) -> Dict[str, Any]:
+async def run_analysis(user_input: str, what_ifs: list = None) -> Dict[str, Any]:
     """Legacy wrapper if needed, or for testing"""
     result = None
-    async for chunk in run_analysis_stream(user_input):
+    async for chunk in run_analysis_stream(user_input, what_ifs):
         data = json.loads(chunk)
         if data["type"] == "result":
             result = data["data"]

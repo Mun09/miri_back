@@ -49,6 +49,8 @@ app.add_middleware(
 # A simple request model
 class IdeaRequest(BaseModel):
     idea: str
+    what_ifs: list[str] = []
+    thread_id: str = "default_thread" # Default for backward compatibility
 
 # [NEW] Simple Stats Manager
 STATS_FILE = "usage_stats.json"
@@ -116,7 +118,7 @@ async def analyze_idea(request: Request, idea_req: IdeaRequest):
     # Count the request
     increment_stats()
     
-    return StreamingResponse(run_analysis_stream(idea_req.idea), media_type="application/x-ndjson")
+    return StreamingResponse(run_analysis_stream(idea_req.idea, idea_req.what_ifs, idea_req.thread_id), media_type="application/x-ndjson")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
