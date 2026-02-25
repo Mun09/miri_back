@@ -8,15 +8,23 @@ import asyncio
 import os
 import json
 from datetime import datetime
+from contextlib import asynccontextmanager
 from miri import run_analysis, run_analysis_stream  # Import your core logic
-
+from modules.graph_agent import setup_persistent_checkpointer
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
+
+@asynccontextmanager
+async def lifespan(app):
+    await setup_persistent_checkpointer()
+    yield
+
+
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -51,6 +59,7 @@ class IdeaRequest(BaseModel):
     idea: str
     what_ifs: list[str] = []
     thread_id: str = "default_thread" # Default for backward compatibility
+    is_whatif_only: bool = False # Skip structurer+investigator, only re-run auditor
 
 # [NEW] Simple Stats Manager
 STATS_FILE = "usage_stats.json"
@@ -118,7 +127,10 @@ async def analyze_idea(request: Request, idea_req: IdeaRequest):
     # Count the request
     increment_stats()
     
-    return StreamingResponse(run_analysis_stream(idea_req.idea, idea_req.what_ifs, idea_req.thread_id), media_type="application/x-ndjson")
+    return StreamingResponse(
+        run_analysis_stream(idea_req.idea, idea_req.what_ifs, idea_req.thread_id, idea_req.is_whatif_only),
+        media_type="application/x-ndjson",
+    )
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))

@@ -94,6 +94,20 @@ class ReferenceItem(BaseModel):
     title: str = Field(description="법령명 또는 판례명 (예: 사료관리법 시행규칙)")
     url: str = Field(description="국가법령정보센터 원문 링크 URL. 없으면 빈 칸")
 
+# --- Structured Evidence Models (for LangGraph Agent) ---
+
+class EvidenceItem(BaseModel):
+    law_name: str = Field(description="법령명 또는 판례명")
+    article: str = Field(default="", description="조문 번호 (예: 제3조 제1항)")
+    content: str = Field(description="핵심 내용 요약")
+    url: str = Field(default="", description="원문 링크 URL")
+    relevance: str = Field(default="", description="사안과의 관련성 설명")
+
+class ResearchEvidence(BaseModel):
+    items: List[EvidenceItem] = Field(default_factory=list, description="수집된 법적 근거 목록")
+    summary: str = Field(default="", description="전체 조사 결과 요약")
+
+
 class StructuredAnalysisResult(BaseModel):
     risk_evaluation: RiskEvaluation
     roadmap: List[RoadmapStep]

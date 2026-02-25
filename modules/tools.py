@@ -27,9 +27,9 @@ class LawSearchTool(BaseTool):
                 return f"[{scope_str}] '{query}'에 대한 검색 결과가 없습니다. 다른 키워드나 Scope를 시도해보세요."
             
             formatted = []
-            for idx, r in enumerate(results[:5]): # 상위 5개만 반환
+            for idx, r in enumerate(results[:7]): # 상위 7개 반환
                 title = r.get('article_title', '')
-                content = r.get('content', '')[:1000] # 길이 제한
+                content = r.get('content', '')[:2000] # 확장된 길이 제한
                 link = r.get('link', 'http://www.law.go.kr')
                 formatted.append(f"[{idx+1}] {r['law_name']} {title}\n링크: {link}\n내용: {content}")
             
@@ -51,7 +51,7 @@ class PrecSearchTool(BaseTool):
 
     async def _arun(self, query: str) -> str:
         try:
-            items = await law_api.search_list(target="prec", query=query, display=3)
+            items = await law_api.search_list(target="prec", query=query, display=5)
             if not items:
                 return f"'{query}'에 대한 판례 검색 결과가 없습니다."
             
@@ -59,7 +59,7 @@ class PrecSearchTool(BaseTool):
             for idx, item in enumerate(items):
                 content, _, _ = await law_api.get_content_from_item(item)
                 title = item.get('사건명', '사건명 없음')
-                formatted.append(f"[{idx+1}] 사건명: {title}\n내용요약: {content[:1000]}")
+                formatted.append(f"[{idx+1}] 사건명: {title}\n내용요약: {content[:2000]}")
                 
             return "\n\n".join(formatted)
         except Exception as e:

@@ -1,8 +1,15 @@
 """
 Configuration and Constants for MIRI Legal Advisory System
 """
+import sys
 import os
 from dotenv import load_dotenv
+
+# Fix Windows cp949 encoding issue with emoji/unicode in print statements
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Load environment variables
 load_dotenv()
@@ -12,6 +19,9 @@ MAX_ANALYSIS_DOCS = 20
 
 # Maximum number of search results per API call (Law, Prec, etc.)
 MAX_SEARCH_RESULTS_PER_SOURCE = 10
+
+# SQLite checkpoint path for persistent conversation memory
+CHECKPOINT_DB_PATH = os.getenv("CHECKPOINT_DB_PATH", "miri_checkpoints.db")
 
 # Test Mode Configuration
 api_key_check = os.getenv("OPENAI_API_KEY")
